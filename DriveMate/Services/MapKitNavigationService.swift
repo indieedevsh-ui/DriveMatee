@@ -518,6 +518,33 @@ final class MapKitNavigationService {
         return (best.0, best.1)
     }
 
+    /// Najbliższe stacje paliw (Apple Maps POI).
+    func findNearbyGasStations(
+        near coordinate: CLLocationCoordinate2D,
+        limit: Int = 5
+    ) async throws -> [PlaceResult] {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = "stacja paliw"
+        request.resultTypes = [.pointOfInterest]
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.gasStation])
+        request.region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 12_000,
+            longitudinalMeters: 12_000
+        )
+        let response = try await MKLocalSearch(request: request).start()
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let ranked = response.mapItems.compactMap { item -> (PlaceResult, CLLocationDistance)? in
+            guard let place = Self.mapItemToPlace(item, fallbackName: "Stacja paliw") else { return nil }
+            let d = origin.distance(
+                from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+            )
+            return (place, d)
+        }
+        .sorted { $0.1 < $1.1 }
+        return Array(ranked.prefix(max(limit, 1)).map(\.0))
+    }
+
     /// Szybkie wyszukanie pierwszego trafienia (nawigacja).
     func findFirstPlace(query: String, near coordinate: CLLocationCoordinate2D?) async throws -> PlaceResult? {
         let request = MKLocalSearch.Request()
@@ -619,13 +646,28 @@ final class MapKitNavigationService {
         request.source = source
         request.destination = destination
         request.transportType = .automobile
-        // Bez alternatyw — wyraźnie szybsze wyznaczanie trasy
-        request.requestsAlternateRoutes = false
+
+        let prefs = DriveMateMemoryStore.shared.activeAvoidances(near: destCoord)
+        let useAlternates = !prefs.isEmpty
+        request.requestsAlternateRoutes = useAlternates
 
         let response = try await MKDirections(request: request).calculate()
-        guard let best = response.routes.first else { throw NavigationError.noRoute }
+        guard let first = response.routes.first else { throw NavigationError.noRoute }
 
-        let mapped = response.routes.map { route -> RouteResult in
+        let best: MKRoute
+        if useAlternates, response.routes.count > 1 {
+            best = Self.pickPreferredRoute(from: response.routes, preferences: prefs) ?? first
+        } else if let waypointRoute = await Self.routeViaPreferredWaypoints(
+            source: source,
+            destination: destination,
+            preferences: prefs
+        ) {
+            best = waypointRoute
+        } else {
+            best = first
+        }
+
+        let mappedRoutes = (useAlternates ? response.routes : [best]).map { route -> RouteResult in
             let minutes = Int((route.expectedTravelTime / 60).rounded())
             let km = route.distance / 1000
             let notices = route.advisoryNotices
@@ -656,7 +698,93 @@ final class MapKitNavigationService {
             alternates: []
         )
 
-        return (mapped[0], [])
+        let bestResult = mappedRoutes.first(where: {
+            abs($0.distanceMeters - best.distance) < 1
+                && abs($0.expectedSeconds - best.expectedTravelTime) < 1
+        }) ?? RouteResult(
+            name: best.name.isEmpty ? "Trasa samochodowa" : best.name,
+            distanceMeters: best.distance,
+            expectedSeconds: best.expectedTravelTime,
+            hasToll: false,
+            advisoryNotices: best.advisoryNotices,
+            summary: String(
+                format: "%@ · %.1f km · ok. %d min",
+                best.name.isEmpty ? "Trasa" : best.name,
+                best.distance / 1000,
+                Int((best.expectedTravelTime / 60).rounded())
+            )
+        )
+
+        return (bestResult, [])
+    }
+
+    /// Wybierz trasę omijającą ulice, których user unika (≥3×).
+    private static func pickPreferredRoute(
+        from routes: [MKRoute],
+        preferences: [RouteAvoidanceMemory]
+    ) -> MKRoute? {
+        guard !preferences.isEmpty else { return routes.first }
+        let avoided = preferences.map { $0.avoidedStreetName.lowercased() }
+        var scored: [(MKRoute, Int)] = []
+        for route in routes {
+            var penalty = 0
+            let blob = (
+                [route.name] + route.steps.map(\.instructions)
+            ).joined(separator: " ").lowercased()
+            for street in avoided {
+                if blob.contains(street.lowercased()) { penalty += 3 }
+            }
+            // Lekki bonus za podobieństwo do wyuczonej ścieżki GPS
+            if let samples = preferences.first(where: { !$0.preferredCoordinates.isEmpty })?.preferredCoordinates,
+               samples.count >= 2 {
+                let overlap = pathOverlapScore(route: route, samples: samples)
+                penalty -= Int(overlap * 4)
+            }
+            scored.append((route, penalty))
+        }
+        return scored.min(by: { $0.1 < $1.1 })?.0
+    }
+
+    private static func pathOverlapScore(route: MKRoute, samples: [CLLocationCoordinate2D]) -> Double {
+        let poly = route.polyline
+        let count = poly.pointCount
+        guard count > 1, !samples.isEmpty else { return 0 }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        poly.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        var hits = 0
+        for sample in samples {
+            let s = CLLocation(latitude: sample.latitude, longitude: sample.longitude)
+            let near = coords.contains { c in
+                s.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)) < 120
+            }
+            if near { hits += 1 }
+        }
+        return Double(hits) / Double(samples.count)
+    }
+
+    /// Gdy jest wyuczona ścieżka — wybierz (przy ponownym calculate z alternatywami) trasę bliższą próbkom.
+    private static func routeViaPreferredWaypoints(
+        source: MKMapItem,
+        destination: MKMapItem,
+        preferences: [RouteAvoidanceMemory]
+    ) async -> MKRoute? {
+        let samples = preferences.first(where: { $0.preferredCoordinates.count >= 2 })?.preferredCoordinates
+        guard let samples, samples.count >= 2 else { return nil }
+
+        let request = MKDirections.Request()
+        request.source = source
+        request.destination = destination
+        request.transportType = .automobile
+        request.requestsAlternateRoutes = true
+        do {
+            let response = try await MKDirections(request: request).calculate()
+            guard !response.routes.isEmpty else { return nil }
+            return response.routes.max(by: { a, b in
+                pathOverlapScore(route: a, samples: samples) < pathOverlapScore(route: b, samples: samples)
+            })
+        } catch {
+            return nil
+        }
     }
 
     /// Ocena ruchu: jedna trasa MKDirections prezentowana na mapie Apple + warstwa ruchu.
@@ -826,4 +954,5 @@ extension Notification.Name {
     static let driveMateDidNavigate = Notification.Name("driveMateDidNavigate")
     static let driveMateDidSelectDestination = Notification.Name("driveMateDidSelectDestination")
     static let driveMateNeedsNavEULA = Notification.Name("driveMateNeedsNavEULA")
+    static let driveMateDidCancelRoute = Notification.Name("driveMateDidCancelRoute")
 }

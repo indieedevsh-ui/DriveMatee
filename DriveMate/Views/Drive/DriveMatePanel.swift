@@ -7,6 +7,8 @@ struct DriveMatePanel: View {
     var guidance: NextTurnGuidance?
     /// Tymczasowy przycisk „Drive” + pastylka do wpisania prośby podczas nawigacji.
     var showNavDriveComposer: Bool = false
+    /// Czy pokazać przycisk Drive (ukrywalny głosem; kafelek skrętu zawsze zostaje).
+    var showDriveButton: Bool = true
 
     @State private var typed = ""
     @State private var showComposer = false
@@ -28,7 +30,7 @@ struct DriveMatePanel: View {
                 TurnGuidanceTile(guidance: guidance)
             }
 
-            if showNavDriveComposer {
+            if showNavDriveComposer, showDriveButton {
                 navDriveControls
             } else if guidance == nil {
                 controlsRow

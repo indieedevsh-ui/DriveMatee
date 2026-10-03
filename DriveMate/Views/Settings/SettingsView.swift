@@ -46,6 +46,14 @@ struct NeonSlider: View {
 struct NeonToggle: View {
     @Binding var isOn: Bool
 
+    private var trackColor: Color {
+        isOn ? DriveMatePalette.limeRoute : Color(white: 0.38)
+    }
+
+    private var thumbColor: Color {
+        isOn ? Color.black.opacity(0.82) : Color(white: 0.72)
+    }
+
     var body: some View {
         Button {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
@@ -54,18 +62,27 @@ struct NeonToggle: View {
         } label: {
             ZStack {
                 Capsule()
-                    .fill(Color.black.opacity(0.75))
+                    .fill(trackColor)
                     .overlay {
                         Capsule()
-                            .stroke(DriveMatePalette.neonGreenDeep.opacity(0.6), lineWidth: 1)
+                            .stroke(
+                                isOn
+                                    ? DriveMatePalette.limeRoute.opacity(0.9)
+                                    : Color.white.opacity(0.12),
+                                lineWidth: 1
+                            )
                     }
                     .frame(width: 64, height: 34)
+                    .shadow(
+                        color: isOn ? DriveMatePalette.limeRoute.opacity(0.55) : .clear,
+                        radius: isOn ? 8 : 0
+                    )
 
-                Capsule()
-                    .fill(DriveMatePalette.neonGreen)
-                    .frame(width: 34, height: 28)
-                    .shadow(color: DriveMatePalette.neonGreen.opacity(0.7), radius: 8)
-                    .offset(x: isOn ? -12 : 12)
+                Circle()
+                    .fill(thumbColor)
+                    .frame(width: 26, height: 26)
+                    .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                    .offset(x: isOn ? 14 : -14)
             }
         }
         .buttonStyle(.plain)
@@ -133,19 +150,29 @@ struct SettingsView: View {
     @State private var clipToPreview: RecordedClip?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                soundCard
-                autoMuteCard
-                themeCard
-                recorderCard
-                clipsCard
-                musicUploadCard
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    driveMateEntryCard
+                    soundCard
+                    autoMuteCard
+                    alwaysUseMyLocationCard
+                    carModelCard
+                    themeCard
+                    recorderCard
+                    clipsCard
+                    musicUploadCard
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
+            .background(settings.isDark ? Color.black : Color(white: 0.9))
+            .navigationDestination(for: String.self) { key in
+                if key == "driveMate" {
+                    DriveMateSettingsView(settings: settings)
+                }
+            }
         }
-        .background(settings.isDark ? Color.black : Color(white: 0.9))
         .fileImporter(
             isPresented: $showImporter,
             allowedContentTypes: [.mp3, .mpeg4Movie, .movie, .audio],
@@ -184,6 +211,29 @@ struct SettingsView: View {
         }
     }
 
+    private var driveMateEntryCard: some View {
+        NavigationLink(value: "driveMate") {
+            SettingsCard(isDark: settings.isDark) {
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Drive Mate")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .modifier(SettingsPrimaryText())
+                        Text("Dane personalizacji, historia wizyt, preferencje tras i trening Hey Drive.")
+                            .font(.system(size: 13, weight: .medium))
+                            .modifier(SettingsSecondaryText())
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(DriveMatePalette.limeRoute)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     private var soundCard: some View {
         SettingsCard(isDark: settings.isDark) {
             VStack(alignment: .leading, spacing: 18) {
@@ -209,6 +259,67 @@ struct SettingsView: View {
                 }
                 Spacer(minLength: 8)
                 NeonToggle(isOn: $settings.autoMuteEnabled)
+            }
+        }
+    }
+
+    private var alwaysUseMyLocationCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Always Use My Location")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                    Text("Pomija pytanie o punkt startowy i zawsze zaczyna trasę z Twojej lokalizacji GPS.")
+                        .font(.system(size: 13, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                NeonToggle(isOn: $settings.alwaysUseMyLocation)
+            }
+        }
+    }
+
+    private var carModelCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("MODEL AUTA")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .modifier(SettingsPrimaryText())
+                Text("Potrzebny do dokładnego szacunku spalania i kosztu paliwa. Możesz też powiedzieć Drive Mate: „moje auto to Toyota Corolla”.")
+                    .font(.system(size: 13, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                TextField("np. Toyota Corolla", text: $settings.carModel)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(settings.isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06))
+                    )
+                    .foregroundStyle(settings.isDark ? .white : .black)
+                    .onChange(of: settings.carModel) { _, newValue in
+                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.count >= 2 {
+                            let est = CarFuelEstimator.litersPer100km(forModel: trimmed)
+                            if est > 0 { settings.fuelConsumptionLPer100 = est }
+                        }
+                    }
+
+                if let consumption = settings.resolvedFuelConsumption, consumption > 0 {
+                    Text(String(format: "Szacunek: %.1f l/100 km · cena orient. %.2f zł/l",
+                                consumption, CarFuelEstimator.defaultFuelPricePLNPerLiter))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DriveMatePalette.limeRoute)
+                } else if !settings.carModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("Brak spalania w litrach (np. EV) — koszt paliwa nie dotyczy.")
+                        .font(.system(size: 12, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                }
             }
         }
     }

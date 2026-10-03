@@ -6,6 +6,7 @@ struct DriveIdleSetupView: View {
     @ObservedObject var location: LocationSpeedService
     @ObservedObject var recent: RecentPlacesStore
     @ObservedObject var assistant: DriveMateAssistant
+    @ObservedObject var settings: AppSettings
     @ObservedObject private var interruptedRoutes = InterruptedRouteStore.shared
     var leadingChrome: CGFloat
     var onNavigationStarted: () -> Void
@@ -101,6 +102,7 @@ struct DriveIdleSetupView: View {
 
             if isEditingDestination {
                 destinationSearchBlock
+                    .frame(maxWidth: 600)
             } else {
                 HStack(spacing: 14) {
                     Button {
@@ -112,7 +114,7 @@ struct DriveIdleSetupView: View {
                         Text("Where you wanna go")
                             .font(.system(size: 22, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white)
-                            .frame(maxWidth: 520)
+                            .frame(maxWidth: .infinity)
                             .padding(.vertical, 22)
                             .padding(.horizontal, 28)
                             .background { AnimatedDestinationPillBackground() }
@@ -126,6 +128,7 @@ struct DriveIdleSetupView: View {
                 .frame(maxWidth: 600)
             }
 
+            // Recently / przerwana trasa — wyrównane do lewej jak na koncepcie
             VStack(alignment: .leading, spacing: 12) {
                 if let interrupted = interruptedRoutes.route {
                     Text("Przerwana trasa:")
@@ -167,7 +170,7 @@ struct DriveIdleSetupView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Anuluj przerwaną trasę")
                     }
-                } else {
+                } else if !recent.topFour.isEmpty {
                     Text("Recently:")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
@@ -177,15 +180,16 @@ struct DriveIdleSetupView: View {
                             GridItem(.flexible(), spacing: 14),
                             GridItem(.flexible(), spacing: 14)
                         ],
+                        alignment: .leading,
                         spacing: 12
                     ) {
-                        ForEach(displayRecentSlots) { slot in
+                        ForEach(recent.topFour) { place in
                             Button {
-                                Task { await selectRecent(slot) }
+                                Task { await selectRecent(place) }
                             } label: {
-                                Text(slot.label)
+                                Text(place.shortLabel)
                                     .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(slot.isPlaceholder ? 0.35 : 0.92))
+                                    .foregroundStyle(.white.opacity(0.92))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 14)
                                     .padding(.horizontal, 10)
@@ -195,12 +199,13 @@ struct DriveIdleSetupView: View {
                                     }
                             }
                             .buttonStyle(.plain)
-                            .disabled(slot.isPlaceholder || isResolving)
+                            .disabled(isResolving)
                         }
                     }
                 }
             }
-            .frame(maxWidth: 420)
+            .frame(maxWidth: 600, alignment: .leading)
+            .padding(.trailing, 72) // lekko w lewo względem dyktafonu / centrum pastylki
             .padding(.top, 8)
 
             Spacer(minLength: 0)
@@ -325,28 +330,65 @@ struct DriveIdleSetupView: View {
     // MARK: - Start
 
     private var startPhase: some View {
-        VStack(spacing: 18) {
-            if let dest = selectedDestination {
-                Text(dest.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-            }
-
+        VStack(spacing: 22) {
             if phase == .typeStart {
+                if let dest = selectedDestination {
+                    Text(dest.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
                 startSearchBlock
             } else {
-                VStack(spacing: 14) {
-                    setupActionButton(title: "Use my location") {
+                VStack(spacing: 16) {
+                    Button {
                         Task { await startWithMyLocation() }
+                    } label: {
+                        Text("USE MY LOCATION")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .tracking(0.6)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: 440)
+                            .padding(.vertical, 22)
+                            .padding(.horizontal, 28)
+                            .background {
+                                Capsule(style: .continuous)
+                                    .fill(Color.black.opacity(0.88))
+                            }
+                            .overlay {
+                                Capsule(style: .continuous)
+                                    .stroke(DriveMatePalette.limeRoute.opacity(0.95), lineWidth: 1.6)
+                            }
+                            .shadow(color: DriveMatePalette.limeRoute.opacity(0.75), radius: 14, y: 0)
+                            .shadow(color: DriveMatePalette.limeRoute.opacity(0.45), radius: 28, y: 0)
                     }
-                    setupActionButton(title: "Type different") {
+                    .buttonStyle(.plain)
+                    .disabled(isResolving)
+
+                    Button {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
                             phase = .typeStart
                             focusedField = .start
                             autocomplete.clear()
                         }
+                    } label: {
+                        Text("DIFFERENT")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .tracking(0.8)
+                            .foregroundStyle(.white.opacity(0.88))
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 28)
+                            .background {
+                                Capsule(style: .continuous)
+                                    .fill(Color.black.opacity(0.55))
+                            }
+                            .overlay {
+                                Capsule(style: .continuous)
+                                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(isResolving)
                 }
             }
 
@@ -362,9 +404,9 @@ struct DriveIdleSetupView: View {
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.white.opacity(0.45))
-            .padding(.top, 8)
+            .padding(.top, 4)
         }
-        .frame(maxWidth: 420)
+        .frame(maxWidth: 520)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 36)
     }
@@ -401,21 +443,6 @@ struct DriveIdleSetupView: View {
                 suggestionsList(forDestination: false)
             }
         }
-    }
-
-    private func setupActionButton(title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .liquidGlassCapsule(.clear.interactive())
-                .overlay { Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1) }
-                .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
-        }
-        .buttonStyle(.plain)
-        .disabled(isResolving)
     }
 
     private func suggestionsList(forDestination: Bool) -> some View {
@@ -471,6 +498,16 @@ struct DriveIdleSetupView: View {
         autocomplete.clear()
         // Bez mini-mapki po wyborze celu z Where you wanna go
         MapComplianceStore.shared.clear()
+
+        // Always Use My Location — pomiń pytanie o start
+        if settings.alwaysUseMyLocation {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.84)) {
+                destinationAppear = false
+            }
+            Task { await startWithMyLocation() }
+            return
+        }
+
         withAnimation(.spring(response: 0.55, dampingFraction: 0.84)) {
             destinationAppear = false
         }
@@ -482,8 +519,7 @@ struct DriveIdleSetupView: View {
         }
     }
 
-    private func selectRecent(_ slot: RecentSlot) async {
-        guard let place = slot.place else { return }
+    private func selectRecent(_ place: RecentPlace) async {
         selectedDestination = ResolvedPlace(
             title: place.title,
             subtitle: place.subtitle,
@@ -606,26 +642,6 @@ struct DriveIdleSetupView: View {
         }
     }
 
-    // MARK: - Recent slots
-
-    private struct RecentSlot: Identifiable {
-        let id: String
-        let label: String
-        let place: RecentPlace?
-        var isPlaceholder: Bool { place == nil }
-    }
-
-    private var displayRecentSlots: [RecentSlot] {
-        var slots: [RecentSlot] = recent.topFour.enumerated().map { index, place in
-            RecentSlot(id: place.id.uuidString, label: place.shortLabel, place: place)
-        }
-        let placeholders = ["Street 1", "Street 2", "Street 3", "Street 4"]
-        while slots.count < 4 {
-            let i = slots.count
-            slots.append(RecentSlot(id: "ph-\(i)", label: placeholders[i], place: nil))
-        }
-        return slots
-    }
 }
 
 /// Animowany subtelny gradient w pastylce „Where you wanna go”.

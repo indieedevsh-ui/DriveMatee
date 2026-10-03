@@ -46,6 +46,20 @@ final class InterruptedRouteStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: key)
     }
 
+    /// Zapisz aktywną nawigację jako „przerwaną”, zanim wystartuje nowa trasa.
+    func snapshotActiveNavigationIfNeeded() {
+        guard let mapState = MapKitNavigationService.shared.mapState,
+              mapState.isNavigating,
+              let dest = mapState.destinationCoordinate,
+              let title = mapState.destinationTitle,
+              !title.isEmpty else { return }
+        save(
+            title: title,
+            subtitle: mapState.statusBanner ?? "",
+            coordinate: dest
+        )
+    }
+
     private func load() {
         guard let data = UserDefaults.standard.data(forKey: key),
               let decoded = try? JSONDecoder().decode(InterruptedRoute.self, from: data) else {
@@ -132,25 +146,18 @@ final class RestaurantOfferService: ObservableObject {
             let dist = origin.distance(
                 from: CLLocation(latitude: found.place.latitude, longitude: found.place.longitude)
             )
-            let snapshot = await Self.makeSnapshot(
-                coordinate: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude),
-                title: found.place.name
+            let photo = await AppleMapsPlaceVisuals.placePhoto(
+                at: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude)
             )
             offer = RestaurantOffer(
                 name: found.place.name,
                 address: found.place.address,
                 coordinate: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude),
                 distanceMeters: dist,
-                snapshotImage: snapshot
+                snapshotImage: photo
             )
             phase = .offering
-            // Mała mapa Apple przy ofercie (compliance)
-            MapComplianceStore.shared.showPlace(
-                name: found.place.name,
-                coordinate: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude),
-                spanMeters: 900
-            )
-            return "Znalazłem \(found.place.name) w odległości \(RestaurantOffer(name: found.place.name, address: found.place.address, coordinate: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude), distanceMeters: dist, snapshotImage: nil).distanceLabel). Potwierdź lub anuluj."
+            return "Znalazłem \(found.place.name) w odległości \(RestaurantOffer(name: found.place.name, address: found.place.address, coordinate: CLLocationCoordinate2D(latitude: found.place.latitude, longitude: found.place.longitude), distanceMeters: dist, snapshotImage: nil).distanceLabel). Możesz powiedzieć spoko, tak, jedź — albo anuluj."
         } catch {
             dismiss()
             return "Nie udało się wyszukać restauracji."
@@ -170,16 +177,8 @@ final class RestaurantOfferService: ObservableObject {
         }
 
         // Zapisz przerwaną trasę jeśli była aktywna nawigacja
-        if willInterruptActiveRoute,
-           let mapState = MapKitNavigationService.shared.mapState,
-           mapState.isNavigating,
-           let dest = mapState.destinationCoordinate,
-           let title = mapState.destinationTitle {
-            InterruptedRouteStore.shared.save(
-                title: title,
-                subtitle: mapState.statusBanner ?? "",
-                coordinate: dest
-            )
+        if willInterruptActiveRoute {
+            InterruptedRouteStore.shared.snapshotActiveNavigationIfNeeded()
         }
 
         do {
@@ -208,43 +207,6 @@ final class RestaurantOfferService: ObservableObject {
             return ("Zaakceptuj warunki nawigacji, potem potwierdź ponownie.", false)
         } catch {
             return ("Nie udało się wyznaczyć trasy do restauracji.", false)
-        }
-    }
-
-    private static func makeSnapshot(
-        coordinate: CLLocationCoordinate2D,
-        title: String
-    ) async -> UIImage? {
-        let options = MKMapSnapshotter.Options()
-        options.region = MKCoordinateRegion(
-            center: coordinate,
-            latitudinalMeters: 500,
-            longitudinalMeters: 500
-        )
-        options.size = CGSize(width: 640, height: 320)
-        options.mapType = .standard
-        options.traitCollection = UITraitCollection(userInterfaceStyle: .dark)
-        let snapshotter = MKMapSnapshotter(options: options)
-        do {
-            let snap = try await snapshotter.start()
-            let image = snap.image
-            let renderer = UIGraphicsImageRenderer(size: image.size)
-            return renderer.image { _ in
-                image.draw(at: .zero)
-                let point = snap.point(for: coordinate)
-                let pin = UIImage(systemName: "fork.knife.circle.fill")?
-                    .withTintColor(DriveMatePalette.limeRouteUI, renderingMode: .alwaysOriginal)
-                let size: CGFloat = 36
-                pin?.draw(in: CGRect(
-                    x: point.x - size / 2,
-                    y: point.y - size,
-                    width: size,
-                    height: size
-                ))
-                _ = title
-            }
-        } catch {
-            return nil
         }
     }
 }

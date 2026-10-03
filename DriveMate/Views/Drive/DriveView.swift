@@ -2,40 +2,80 @@ import SwiftUI
 import UIKit
 import MapKit
 import CoreLocation
+import Combine
 
 struct SpeedBadge: View {
     let speedKmh: Int
 
     var body: some View {
-        Text("\(speedKmh)KM/H")
-            .font(.system(size: 16, weight: .black, design: .rounded))
-            .foregroundStyle(Color.black.opacity(0.9))
-            .minimumScaleFactor(0.7)
-            .lineLimit(1)
-            .monospacedDigit()
-            .padding(.horizontal, 12)
-            .frame(minWidth: 88, minHeight: 52)
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                DriveMatePalette.neonGreen.opacity(0.5),
-                                DriveMatePalette.neonGreenMid.opacity(0.28),
-                                DriveMatePalette.neonGreenDeep.opacity(0.14)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+        VStack(spacing: 2) {
+            Text("\(speedKmh)")
+                .font(.system(size: 28, weight: .black, design: .rounded))
+                .foregroundStyle(Color.black.opacity(0.9))
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+                .monospacedDigit()
+            Text("KM/H")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.black.opacity(0.55))
+                .tracking(0.6)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(minWidth: 108, minHeight: 64)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            DriveMatePalette.neonGreen.opacity(0.5),
+                            DriveMatePalette.neonGreenMid.opacity(0.28),
+                            DriveMatePalette.neonGreenDeep.opacity(0.14)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-                    .liquidGlassRect(cornerRadius: 16, .clear)
+                )
+                .liquidGlassRect(cornerRadius: 18, .clear)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                }
+                .shadow(color: DriveMatePalette.neonGreen.opacity(0.32), radius: 8, y: 2)
+        }
+        .accessibilityLabel("Prędkość \(speedKmh) kilometrów na godzinę")
+    }
+}
+
+struct ClockBadge: View {
+    @State private var now = Date()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var timeText: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "pl_PL")
+        f.dateFormat = "H:mm"
+        return f.string(from: now)
+    }
+
+    var body: some View {
+        Text(timeText)
+            .font(.system(size: 22, weight: .bold, design: .rounded))
+            .foregroundStyle(Color.white.opacity(0.95))
+            .monospacedDigit()
+            .padding(.horizontal, 16)
+            .frame(minWidth: 96, minHeight: 64)
+            .background {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.black.opacity(0.28))
+                    .liquidGlassRect(cornerRadius: 18, .clear)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
                     }
-                    .shadow(color: DriveMatePalette.neonGreen.opacity(0.32), radius: 8, y: 2)
             }
-            .accessibilityLabel("Prędkość \(speedKmh) kilometrów na godzinę")
+            .onReceive(timer) { now = $0 }
+            .accessibilityLabel("Godzina \(timeText)")
     }
 }
 
@@ -156,6 +196,7 @@ struct DriveView: View {
     @ObservedObject var assistant: DriveMateAssistant
     @ObservedObject var camera: CameraRecorderService
     @ObservedObject var recentPlaces: RecentPlacesStore
+    @ObservedObject var settings: AppSettings
     var isDark: Bool
     var leadingChrome: CGFloat = 168
 
@@ -165,14 +206,23 @@ struct DriveView: View {
     @State private var idleVoiceMode = false
     @ObservedObject private var mapCompliance = MapComplianceStore.shared
     @ObservedObject private var restaurantOffer = RestaurantOfferService.shared
+    @ObservedObject private var gasOffer = GasStationOfferService.shared
+    @ObservedObject private var infoCard = DriveInfoCardStore.shared
+    @ObservedObject private var chromeVisibility = DriveChromeVisibilityStore.shared
 
     private var isNavigating: Bool { mapState.isNavigating }
     private var showingTripEnd: Bool { tripSummary != nil }
     private var showAvatarTopTrailing: Bool {
-        !isNavigating && !showingTripEnd && (idleVoiceMode || assistant.isAvatarVisible)
+        // Oczy przy aktywnym asystencie — także podczas nawigacji (po Hey Drive)
+        !showingTripEnd
+            && (idleVoiceMode || (assistant.isAvatarVisible && !assistant.isWakeListening))
     }
     private var showComplianceMap: Bool {
-        !isNavigating && mapCompliance.surface != nil && !restaurantOffer.isActive
+        !isNavigating
+            && mapCompliance.surface != nil
+            && !restaurantOffer.isActive
+            && !gasOffer.isActive
+            && !infoCard.isActive
     }
 
     var body: some View {
@@ -208,6 +258,7 @@ struct DriveView: View {
                     location: location,
                     recent: recentPlaces,
                     assistant: assistant,
+                    settings: settings,
                     leadingChrome: leadingChrome,
                     onNavigationStarted: {
                         idleVoiceMode = false
@@ -247,30 +298,28 @@ struct DriveView: View {
                 .allowsHitTesting(true)
             }
 
-            // Same oczy w prawym górnym — tylko poza nawigacją
+            // Oczy Drive Mate — dół, wyśrodkowane na osi X (w obszarze mapy)
             if showAvatarTopTrailing {
                 VStack {
-                    HStack {
-                        Spacer()
-                        DriveMateAvatar(
-                            isVisible: assistant.isAvatarVisible || idleVoiceMode,
-                            mood: assistant.avatarMood,
-                            speechGlow: max(assistant.speechGlow, assistant.audioLevel),
-                            eyesOnly: true,
-                            eyesDelay: 0.32
-                        )
-                        .padding(.trailing, 28)
-                        .padding(.top, 10)
-                        .onTapGesture {
-                            assistant.toggleListening()
-                        }
+                    Spacer(minLength: 0)
+                    DriveMateAvatar(
+                        isVisible: assistant.isAvatarVisible || idleVoiceMode,
+                        mood: assistant.avatarMood,
+                        speechGlow: max(assistant.speechGlow, assistant.audioLevel),
+                        eyesOnly: true,
+                        eyesDelay: 0
+                    )
+                    .padding(.bottom, isNavigating ? 30 : 36)
+                    .onTapGesture {
+                        assistant.toggleListening()
                     }
-                    Spacer()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .ignoresSafeArea(edges: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.leading, leadingChrome)
+                .ignoresSafeArea(edges: .bottom)
                 .zIndex(20)
-                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .allowsHitTesting(true)
             }
 
             if isNavigating, !showingTripEnd {
@@ -297,18 +346,9 @@ struct DriveView: View {
                 RestaurantOfferPopup(
                     offer: offer,
                     onConfirm: {
-                        if restaurantOffer.phase == .awaitingVoiceConfirm {
-                            Task {
-                                let outcome = await restaurantOffer.navigateToOfferIfConfirmed()
-                                if outcome.started {
-                                    assistant.promptAndListen(outcome.reply)
-                                } else {
-                                    assistant.promptAndListen(outcome.reply)
-                                }
-                            }
-                        } else {
-                            restaurantOffer.beginAwaitingVoiceConfirm()
-                            assistant.promptAndListen(restaurantOffer.confirmationPrompt())
+                        Task {
+                            let outcome = await restaurantOffer.navigateToOfferIfConfirmed()
+                            assistant.promptAndListen(outcome.reply)
                         }
                     },
                     onCancel: {
@@ -323,44 +363,120 @@ struct DriveView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.94)))
                 .zIndex(41)
             }
+
+            // Oferta stacji paliw
+            if gasOffer.phase == .offering || gasOffer.phase == .awaitingVoiceConfirm,
+               let offer = gasOffer.offer {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .zIndex(40)
+                GasStationOfferPopup(
+                    offer: offer,
+                    nearbySummary: gasOffer.nearbySummary,
+                    onConfirm: {
+                        Task {
+                            let outcome = await gasOffer.navigateToOfferIfConfirmed()
+                            assistant.promptAndListen(outcome.reply)
+                        }
+                    },
+                    onCancel: {
+                        gasOffer.dismiss()
+                        mapCompliance.clear()
+                        if mapState.isNavigating {
+                            assistant.promptAndListen("Anulowano. Kontynuujemy trasę.")
+                        }
+                    }
+                )
+                .padding(.leading, leadingChrome * 0.35)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                .zIndex(41)
+            }
+
+            // Info: ulica / koszt paliwa (auto-zamknięcie po TTS)
+            if let card = infoCard.card {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .zIndex(38)
+                    .onTapGesture { infoCard.dismiss() }
+                DriveInfoCardPopup(card: card)
+                    .padding(.leading, leadingChrome * 0.35)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .zIndex(39)
+            }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: isNavigating)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: isMusicBarVisible)
         .animation(.spring(response: 0.48, dampingFraction: 0.86), value: showingTripEnd)
         .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showAvatarTopTrailing)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: restaurantOffer.phase)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: gasOffer.phase)
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: infoCard.isActive)
         .onChange(of: mapState.isNavigating) { _, navigating in
             if navigating {
                 idleVoiceMode = false
                 mapCompliance.clear()
                 assistant.dismissAvatar()
+                // Wake już działa w całej sekcji Drive — upewnij się, że jest włączony.
                 assistant.setNavigationWakeListening(true)
                 revealMusicBar()
                 mapState.updateGuidance(userCoordinate: location.coordinate)
             } else {
-                assistant.setNavigationWakeListening(false)
+                // Po zakończeniu trasy nadal słuchaj Hey Drive w Drive.
+                assistant.setNavigationWakeListening(true)
                 musicHideTask?.cancel()
                 isMusicBarVisible = false
             }
         }
+        .onAppear {
+            mapState.updateGuidance(userCoordinate: location.coordinate)
+            assistant.setNavigationWakeListening(true)
+        }
+        .onDisappear {
+            musicHideTask?.cancel()
+            assistant.setNavigationWakeListening(false)
+        }
         .onChange(of: location.coordinate?.latitude) { _, _ in
             mapState.updateGuidance(userCoordinate: location.coordinate)
             mapState.trackTripProgress(userCoordinate: location.coordinate)
+            if let coord = location.coordinate {
+                DriveMateMemoryStore.shared.observeNavigationAdherence(
+                    userCoordinate: coord,
+                    route: mapState.route,
+                    destinationTitle: mapState.destinationTitle,
+                    destinationCoordinate: mapState.destinationCoordinate
+                )
+            }
         }
         .onChange(of: location.coordinate?.longitude) { _, _ in
             mapState.updateGuidance(userCoordinate: location.coordinate)
             mapState.trackTripProgress(userCoordinate: location.coordinate)
+            if let coord = location.coordinate {
+                DriveMateMemoryStore.shared.observeNavigationAdherence(
+                    userCoordinate: coord,
+                    route: mapState.route,
+                    destinationTitle: mapState.destinationTitle,
+                    destinationCoordinate: mapState.destinationCoordinate
+                )
+            }
         }
         .onChange(of: mapState.turnAnnouncement) { _, announcement in
             guard let announcement else { return }
             assistant.announceNavigation(announcement)
             mapState.consumeTurnAnnouncement()
         }
-        .onAppear {
-            mapState.updateGuidance(userCoordinate: location.coordinate)
-        }
-        .onDisappear {
-            musicHideTask?.cancel()
+        .onReceive(NotificationCenter.default.publisher(for: .driveMateDidCancelRoute)) { note in
+            let duration = note.userInfo?["duration"] as? TimeInterval ?? 0
+            let distance = note.userInfo?["distance"] as? CLLocationDistance ?? 0
+            let avg = note.userInfo?["avgSpeed"] as? Double ?? 0
+            let title = note.userInfo?["title"] as? String
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+                tripSummary = TripSummary(
+                    durationSeconds: duration,
+                    distanceMeters: distance,
+                    averageSpeedKmh: avg,
+                    destinationTitle: title
+                )
+            }
         }
     }
 
@@ -369,8 +485,15 @@ struct DriveView: View {
         VStack {
             HStack(alignment: .top) {
                 HStack(spacing: 10) {
-                    SpeedBadge(speedKmh: location.speedKmh)
-                    if camera.showsRecordingIndicator {
+                    if chromeVisibility.isVisible(.speedometer) {
+                        SpeedBadge(speedKmh: location.speedKmh)
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
+                    if chromeVisibility.isVisible(.clock) {
+                        ClockBadge()
+                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    }
+                    if chromeVisibility.isVisible(.recording), camera.showsRecordingIndicator {
                         RecordingIndicatorDot()
                             .padding(.top, 6)
                             .transition(.opacity.combined(with: .scale))
@@ -380,12 +503,14 @@ struct DriveView: View {
                 .padding(.top, 20)
                 .onTapGesture { revealMusicBar() }
                 .animation(.easeInOut(duration: 0.25), value: camera.showsRecordingIndicator)
+                .animation(.spring(response: 0.38, dampingFraction: 0.84), value: chromeVisibility.hidden)
 
                 Spacer()
                 DriveMatePanel(
                     assistant: assistant,
                     guidance: mapState.nextTurnGuidance,
-                    showNavDriveComposer: true
+                    showNavDriveComposer: true,
+                    showDriveButton: chromeVisibility.isVisible(.driveButton)
                 )
                 .padding(.trailing, 36)
                 .padding(.top, 12)
@@ -400,7 +525,7 @@ struct DriveView: View {
             HStack(alignment: .bottom) {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 12) {
-                    if mapState.showRecenterButton {
+                    if chromeVisibility.isVisible(.recenter), mapState.showRecenterButton {
                         RecenterNavButton {
                             revealMusicBar()
                             mapState.recenterOnUser()
@@ -440,6 +565,11 @@ struct DriveView: View {
         musicHideTask?.cancel()
         isMusicBarVisible = false
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        DriveMateMemoryStore.shared.notifyTripEnded(
+            destinationTitle: mapState.destinationTitle,
+            destinationCoordinate: mapState.destinationCoordinate,
+            subtitle: mapState.statusBanner ?? ""
+        )
         let summary = mapState.endTripAndSummarize()
         withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
             tripSummary = summary

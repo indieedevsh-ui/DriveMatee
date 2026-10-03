@@ -52,11 +52,23 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     private var speechGlowTask: Task<Void, Never>?
     private var siriGlowTask: Task<Void, Never>?
     private var wakeRestartTask: Task<Void, Never>?
+    /// Auto-wyłączenie gdy kierowca milczy podczas aktywnego słuchania.
+    private var listeningIdleTask: Task<Void, Never>?
     private var keepListeningAfterSpeech = false
-    /// Włączone przez cały czas aktywnej nawigacji.
+    /// Włączone przez cały czas sekcji Drive (idle + nawigacja).
     private var navigationWakeEnabled = false
     /// Pełne przechwytywanie komendy (po wake / przycisku) — nie restartuj wake.
     private var isCapturingCommand = false
+    /// Chroni przed podwójnym triggereem wake (partial + final).
+    private var wakeTriggerLocked = false
+    /// Trening Hey Drive przejmuje mikrofon.
+    private var wakePausedForTraining = false
+
+    /// 3 s bez żadnej mowy po aktywacji → koniec.
+    private let listeningIdleTimeoutNs: UInt64 = 3_000_000_000
+    /// Max długość jednej sesji dyktafonu (zabezpieczenie przed nieskończonym nasłuchem).
+    private let maxCaptureNs: UInt64 = 7_500_000_000
+    private var maxCaptureTask: Task<Void, Never>?
 
     private weak var settings: AppSettings?
     private weak var music: MusicPlayerService?
@@ -64,14 +76,64 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     private let wakePhrases = [
         "hey drive mate", "hej drive mate", "hey drivemate", "hej drivemate",
         "hey drive", "hei drive", "hej drive", "ej drive", "ok drive",
-        "hej drajw", "hey drajw", "hej draj", "hey draj", "ej drajw",
-        "drive mate", "drivemate", "hej drajwmejt", "hey drajwmejt"
+        "hej drajw", "hey drajw", "hei drajw", "hej draj", "hey draj", "ej drajw",
+        "hey dryve", "hej dryve", "hey draif", "hej draif", "hey draiw", "hej draiw",
+        "drive mate", "drivemate", "drajw mate", "hej drajwmejt", "hey drajwmejt",
+        "a drive", "aj drive", "a drajw", "ok drajw"
     ]
 
     override init() {
         super.init()
         synthesizer.delegate = self
         wireASR()
+        wireTrainingNotifications()
+    }
+
+    private func wireTrainingNotifications() {
+        NotificationCenter.default.addObserver(
+            forName: .driveMateWakeTrainingWillStart,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.pauseCaptureForWakeTraining()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .driveMateWakeTrainingDidEnd,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.resumeCaptureAfterWakeTraining()
+            }
+        }
+    }
+
+    private func pauseCaptureForWakeTraining() {
+        wakePausedForTraining = true
+        wakeRestartTask?.cancel()
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
+        isWakeListening = false
+        isCapturingCommand = false
+        wakeTriggerLocked = true
+        asr.cancel()
+        synthesizer.stopSpeaking(at: .immediate)
+        audioLevel = 0
+        if state == .listening || state == .speaking {
+            state = .idle
+        }
+        fadeSiriGlow(to: 0, duration: 0.25)
+    }
+
+    private func resumeCaptureAfterWakeTraining() {
+        wakeTriggerLocked = false
+        wakePausedForTraining = false
+        restorePlaybackSession()
+        if navigationWakeEnabled {
+            scheduleWakeSpotting(after: 0.45)
+        }
     }
 
     func configure(
@@ -152,28 +214,32 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
     func summon() { activateListening() }
 
-    /// Włącz / wyłącz ciągłe nasłuchiwanie „Hey Drive” na czas nawigacji.
+    /// Włącz / wyłącz ciągłe nasłuchiwanie „Hey Drive” w sekcji Drive (idle + nawigacja).
     func setNavigationWakeListening(_ enabled: Bool) {
         navigationWakeEnabled = enabled
         if enabled {
-            scheduleWakeSpotting(after: 0.45)
+            if wakePausedForTraining { return }
+            Task { _ = await asr.preparePermissions() }
+            scheduleWakeSpotting(after: 0.2)
         } else {
             wakeRestartTask?.cancel()
             isWakeListening = false
-            if !isCapturingCommand, state == .listening {
+            wakeTriggerLocked = false
+            if !isCapturingCommand {
                 asr.cancel()
-                state = .idle
-                fadeSiriGlow(to: 0, duration: 0.4)
+                if state == .listening { state = .idle }
+                fadeSiriGlow(to: 0, duration: 0.35)
             }
         }
     }
 
     func dismissAvatar() {
+        listeningIdleTask?.cancel()
         hideAvatarTask?.cancel()
         speechGlowTask?.cancel()
         withAnimation(.easeOut(duration: 0.35)) { speechGlow = 0 }
-        fadeSiriGlow(to: 0, duration: 0.55)
-        withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
+        fadeSiriGlow(to: 0, duration: 0.45)
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.88)) {
             isAvatarVisible = false
         }
         synthesizer.stopSpeaking(at: .immediate)
@@ -191,6 +257,32 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         }
     }
 
+    /// Natychmiastowe zamknięcie aktywnego asystenta (np. „anuluj nasłuchiwanie”).
+    func cancelActiveListening(spokenReply: String? = nil) {
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
+        keepListeningAfterSpeech = false
+        isCapturingCommand = false
+        isWakeListening = false
+        wakeTriggerLocked = false
+        asr.cancel()
+        audioLevel = 0
+        synthesizer.stopSpeaking(at: .immediate)
+        if let spokenReply, !spokenReply.isEmpty {
+            reply = spokenReply
+            speak(spokenReply, keepListeningAfter: false, faster: true)
+        } else {
+            reply = ""
+            state = .idle
+            fadeSiriGlow(to: 0, duration: 0.45)
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
+                isAvatarVisible = false
+            }
+            restorePlaybackSession()
+            resumeWakeIfNeeded()
+        }
+    }
+
     func toggleListening() {
         if !isAvatarVisible {
             activateListening()
@@ -198,14 +290,12 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         }
         if state == .listening, !isWakeListening {
             let hasText = !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            asr.stop(submit: hasText)
-            audioLevel = 0
-            isCapturingCommand = false
-            if !hasText {
-                state = .idle
-                fadeSiriGlow(to: 0, duration: 0.55)
-                scheduleHideAvatar()
-                resumeWakeIfNeeded()
+            listeningIdleTask?.cancel()
+            maxCaptureTask?.cancel()
+            if hasText {
+                asr.stop(submit: true)
+            } else {
+                endListeningWithoutCommand(spoken: "Anulowano.")
             }
         } else if state == .idle || state == .speaking || isWakeListening {
             if state == .speaking { synthesizer.stopSpeaking(at: .immediate) }
@@ -260,69 +350,111 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         asr.onPartialTranscript = { [weak self] text in
             guard let self else { return }
             self.transcript = text
-            // Podczas wake-spot nie pulsuj UI — ciche nasłuchiwanie.
-            if !self.isWakeListening {
+
+            // Wake: aktywuj NATYCHMIAST na partialu.
+            if self.isWakeListening, !self.isCapturingCommand, !self.wakeTriggerLocked {
+                if self.containsWakeWord(text) {
+                    self.handleWakeSpottingTranscript(text, fromPartial: true)
+                    return
+                }
+            }
+
+            // Dyktafon: każde nowe słowo odświeża timer ciszy (koniec wypowiedzi).
+            if self.isCapturingCommand, !self.isWakeListening {
+                self.resetListeningIdleTimer()
                 self.pulseSpeechGlow()
             }
         }
         asr.onFinalTranscript = { [weak self] text in
             guard let self else { return }
-            self.transcript = text
-            self.audioLevel = 0
-
+            // Komenda dyktafonu — zawsze przetwarzaj (nawet gdy wakeTriggerLocked).
+            if self.isCapturingCommand, !self.isWakeListening {
+                self.finishDictation(with: text)
+                return
+            }
             if self.isWakeListening, !self.isCapturingCommand {
-                self.handleWakeSpottingTranscript(text)
+                self.handleWakeSpottingTranscript(text, fromPartial: false)
                 return
             }
-
-            self.music?.duckForAssistant(false, autoMuteEnabled: self.settings?.autoMuteEnabled ?? true)
-            self.restorePlaybackSession()
-            let hasWake = self.containsWakeWord(text)
-            let stripped = self.stripWakeWord(from: text)
-            let command = hasWake ? stripped : text
-            guard !command.isEmpty else {
-                if hasWake {
-                    self.activateListening()
-                } else {
-                    self.state = .idle
-                    self.resumeWakeIfNeeded()
-                }
-                return
-            }
-            Task { await self.handleCommand(command) }
         }
         asr.onAudioLevel = { [weak self] level in
             guard let self else { return }
             if self.isWakeListening { return }
-            // Tylko fale — nie ruszaj poświaty (to powodowało zacięcia).
             if abs(level - self.audioLevel) > 0.04 {
                 self.audioLevel = level
             }
         }
         asr.onWakeSpotNeedsRestart = { [weak self] in
             guard let self else { return }
+            guard !self.wakeTriggerLocked, !self.isCapturingCommand else { return }
             self.isWakeListening = false
             if self.state == .listening { self.state = .idle }
-            self.scheduleWakeSpotting(after: 0.25)
+            self.scheduleWakeSpotting(after: 0.2)
         }
     }
 
-    private func handleWakeSpottingTranscript(_ text: String) {
-        let hasWake = containsWakeWord(text)
-        let stripped = stripWakeWord(from: text)
-        isWakeListening = false
+    /// Koniec nagrania dyktafonu → analiza → działanie (albo krótka odmowa).
+    private func finishDictation(with raw: String) {
+        guard isCapturingCommand, !isWakeListening else { return }
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
+        listeningIdleTask = nil
+        maxCaptureTask = nil
 
-        guard hasWake else {
-            // Szum / rozmowa bez wake — wznów ciche nasłuchiwanie.
-            scheduleWakeSpotting(after: 0.2)
+        // Zatrzymaj mic zanim zaczniemy myśleć / mówić.
+        asr.cancel()
+        audioLevel = 0
+        isCapturingCommand = false
+
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        transcript = trimmed
+
+        music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+        restorePlaybackSession()
+
+        let hasWake = containsWakeWord(trimmed)
+        let stripped = stripWakeWord(from: trimmed)
+        let command = hasWake ? stripped : trimmed
+
+        guard !command.isEmpty else {
+            if hasWake {
+                activateListening()
+            } else {
+                endListeningWithoutCommand(spoken: "Nie usłyszałem. Powiedz Hey Drive i spróbuj ponownie.")
+            }
             return
         }
+
+        Task { await handleCommand(command) }
+    }
+
+    private func handleWakeSpottingTranscript(_ text: String, fromPartial: Bool) {
+        let hasWake = containsWakeWord(text)
+        let stripped = stripWakeWord(from: text)
+
+        guard hasWake else {
+            if !fromPartial {
+                isWakeListening = false
+                scheduleWakeSpotting(after: 0.15)
+            }
+            return
+        }
+
+        guard !wakeTriggerLocked else { return }
+        wakeTriggerLocked = true
+        isWakeListening = false
+        wakeRestartTask?.cancel()
 
         if stripped.isEmpty {
             activateListening()
         } else {
+            // „Hey Drive jedź na Wawel” — od razu komenda, bez drugiej sesji.
             music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
             restorePlaybackSession()
+            asr.cancel()
+            showAvatar()
+            fadeSiriGlow(to: 1, duration: 0.22)
+            isCapturingCommand = false
             Task { await handleCommand(stripped) }
         }
     }
@@ -330,9 +462,12 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     private func scheduleWakeSpotting(after delay: TimeInterval) {
         wakeRestartTask?.cancel()
         guard navigationWakeEnabled else { return }
+        guard !wakePausedForTraining else { return }
         wakeRestartTask = Task { @MainActor in
             let ns = UInt64(max(delay, 0) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: ns)
+            if ns > 0 {
+                try? await Task.sleep(nanoseconds: ns)
+            }
             guard !Task.isCancelled else { return }
             startWakeSpottingIfNeeded()
         }
@@ -340,44 +475,49 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
     private func startWakeSpottingIfNeeded() {
         guard navigationWakeEnabled else { return }
+        guard !wakePausedForTraining else { return }
         guard !isCapturingCommand else { return }
         guard !isWakeListening else { return }
+        guard !wakeTriggerLocked || state == .idle else { return }
         switch state {
         case .thinking, .speaking: return
-        case .listening: return // pełne słuchanie komendy
+        case .listening where isCapturingCommand: return
         case .unavailable: return
         default: break
         }
 
+        wakeTriggerLocked = false
         isWakeListening = true
         isCapturingCommand = false
         state = .listening
         transcript = ""
-        // Bez awatara / glow — ciche tło.
-        fadeSiriGlow(to: 0, duration: 0.2)
+        fadeSiriGlow(to: 0, duration: 0.15)
 
         Task {
             await asr.start(mode: .wakeSpot)
             if case .unavailable = asr.status {
                 isWakeListening = false
                 state = .idle
-                // Spróbuj później (np. brak uprawnień tymczasowo).
-                scheduleWakeSpotting(after: 2.0)
+                scheduleWakeSpotting(after: 1.5)
             }
         }
     }
 
     private func resumeWakeIfNeeded() {
         guard navigationWakeEnabled else { return }
-        scheduleWakeSpotting(after: 0.4)
+        wakeTriggerLocked = false
+        scheduleWakeSpotting(after: 0.25)
     }
 
     private func activateListening() {
         wakeRestartTask?.cancel()
         hideAvatarTask?.cancel()
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
         synthesizer.stopSpeaking(at: .immediate)
         keepListeningAfterSpeech = false
         isWakeListening = false
+        wakeTriggerLocked = true
         isCapturingCommand = true
         asr.cancel()
         showAvatar()
@@ -385,43 +525,89 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         transcript = ""
         audioLevel = 0
         state = .listening
-        // Jedna płynna animacja SwiftUI — bez krokowego przerysowywania
-        fadeSiriGlow(to: 1, duration: 0.55)
+        fadeSiriGlow(to: 1, duration: 0.22)
 
         if settings?.autoMuteEnabled == true {
             music?.duckForAssistant(true, autoMuteEnabled: true)
         }
 
-        // ASR po krótkim oddechu UI, żeby nie zacinać animacji wejścia
+        // Brak mowy w ogóle → zamknij.
+        resetListeningIdleTimer()
+        // Twardy limit sesji dyktafonu.
+        armMaxCaptureTimer()
+
         Task {
-            try? await Task.sleep(nanoseconds: 280_000_000)
-            guard !Task.isCancelled, state == .listening, isCapturingCommand else { return }
             await asr.start(mode: .command)
+            guard state == .listening, isCapturingCommand else { return }
             if case .unavailable(let msg) = asr.status {
                 lastError = msg
-                state = .idle
-                isCapturingCommand = false
-                audioLevel = 0
-                fadeSiriGlow(to: 0, duration: 0.4)
-                restorePlaybackSession()
-                resumeWakeIfNeeded()
+                endListeningWithoutCommand(spoken: "Mikrofon niedostępny.")
             }
         }
     }
 
+    private func armMaxCaptureTimer() {
+        maxCaptureTask?.cancel()
+        maxCaptureTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: maxCaptureNs)
+            guard !Task.isCancelled else { return }
+            guard isCapturingCommand, !isWakeListening, state == .listening else { return }
+            // Wymuś koniec — weź co jest w partialu.
+            let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count >= 2 {
+                asr.stop(submit: true)
+            } else {
+                endListeningWithoutCommand(spoken: "Nie usłyszałem komendy.")
+            }
+        }
+    }
+
+    private func resetListeningIdleTimer() {
+        listeningIdleTask?.cancel()
+        guard isCapturingCommand, !isWakeListening, state == .listening else { return }
+        listeningIdleTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: listeningIdleTimeoutNs)
+            guard !Task.isCancelled else { return }
+            guard isCapturingCommand, !isWakeListening, state == .listening else { return }
+            let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count >= 2 {
+                // Była mowa, a potem cisza — wyślij jak dyktafon.
+                asr.stop(submit: true)
+            } else {
+                endListeningWithoutCommand(spoken: "Nie usłyszałem. Powiedz Hey Drive i spróbuj ponownie.")
+            }
+        }
+    }
+
+    private func endListeningWithoutCommand(spoken: String) {
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
+        asr.cancel()
+        audioLevel = 0
+        isCapturingCommand = false
+        wakeTriggerLocked = false
+        state = .idle
+        reply = spoken
+        fadeSiriGlow(to: 0.35, duration: 0.35)
+        speak(spoken, keepListeningAfter: false, faster: true)
+        restorePlaybackSession()
+    }
+
     private func showAvatar() {
         hideAvatarTask?.cancel()
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.76)) {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.72)) {
             isAvatarVisible = true
         }
     }
 
     private func scheduleHideAvatar() {
         hideAvatarTask?.cancel()
+        listeningIdleTask?.cancel()
+        fadeSiriGlow(to: 0, duration: 0.5)
         hideAvatarTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled, state == .idle else { return }
-            withAnimation(.spring(response: 0.72, dampingFraction: 0.9)) {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.88)) {
                 isAvatarVisible = false
             }
         }
@@ -442,17 +628,15 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     private func handleCommand(_ prompt: String) async {
         let cleaned = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else {
-            state = .idle
-            isCapturingCommand = false
-            fadeSiriGlow(to: 0, duration: 0.6)
-            scheduleHideAvatar()
-            resumeWakeIfNeeded()
+            endListeningWithoutCommand(spoken: "Nie usłyszałem komendy.")
             return
         }
 
+        listeningIdleTask?.cancel()
+        maxCaptureTask?.cancel()
         wakeRestartTask?.cancel()
         isWakeListening = false
-        isCapturingCommand = true
+        isCapturingCommand = false
         showAvatar()
         state = .thinking
         reply = ""
@@ -470,23 +654,28 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         lastCommandSource = result.source.rawValue
         reply = result.reply
 
+        if result.dismissAssistant {
+            cancelActiveListening(spokenReply: result.reply.isEmpty ? "OK, wyłączam." : result.reply)
+            return
+        }
+
         if result.awaitFurtherInput {
-            // Od razu pytanie o start — krótka TTS, bez dodatkowych fade’ów
             isCapturingCommand = true
             speak(result.reply, keepListeningAfter: true, faster: true)
         } else {
             isCapturingCommand = false
-            fadeSiriGlow(to: 0, duration: 0.45)
+            wakeTriggerLocked = false
+            fadeSiriGlow(to: 0.55, duration: 0.35)
             speak(result.reply, keepListeningAfter: false)
             if result.didApplySideEffect {
                 hideAvatarTask?.cancel()
                 hideAvatarTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 700_000_000)
                     guard !Task.isCancelled else { return }
+                    fadeSiriGlow(to: 0, duration: 0.4)
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.88)) {
                         isAvatarVisible = false
                     }
-                    fadeSiriGlow(to: 0, duration: 0.35)
                 }
             }
         }
@@ -527,23 +716,73 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         } catch { /* ignore */ }
     }
 
+    private func containsWakeWord(_ text: String) -> Bool {
+        let lower = normalizeWakeText(text)
+        let learned = DriveMateMemoryStore.shared.learnedWakePhrases
+        if learned.contains(where: { phrase in
+            let n = normalizeWakeText(phrase)
+            // Wytrenowana fraza — także częściowe dopasowanie (≥4 znaki)
+            return !n.isEmpty && (
+                lower.contains(n)
+                    || (n.count >= 4 && lower.count >= 4 && (n.contains(lower) || lower.contains(n)))
+            )
+        }) {
+            return true
+        }
+        if wakePhrases.contains(where: { lower.contains(normalizeWakeText($0)) }) {
+            return true
+        }
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(hej|hey|hei|ej|ok|a|aj)\s*(drajw|draj|draif|draiw|dryve|drive|drivemate|drajwmejt)"#,
+            options: [.caseInsensitive]
+        ) else { return false }
+        let range = NSRange(lower.startIndex..<lower.endIndex, in: lower)
+        if regex.firstMatch(in: lower, options: [], range: range) != nil {
+            return true
+        }
+        return lower.contains("drive mate")
+            || lower.contains("drivemate")
+            || lower.contains("drajw mate")
+            || lower.contains("drajwmate")
+            || lower == "hey drive"
+            || lower == "hej drive"
+            || lower == "hej drajw"
+            || lower == "hey drajw"
+    }
+
     private func stripWakeWord(from text: String) -> String {
-        var result = text
-        let lower = text.lowercased()
-        for phrase in wakePhrases.sorted(by: { $0.count > $1.count }) {
-            if let range = lower.range(of: phrase) {
-                let start = text.index(text.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))
-                let end = text.index(text.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound))
-                result.removeSubrange(start..<end)
+        var result = normalizeWakeText(text)
+        let allPhrases = DriveMateMemoryStore.shared.learnedWakePhrases + wakePhrases
+        for phrase in allPhrases.sorted(by: { $0.count > $1.count }) {
+            let needle = normalizeWakeText(phrase)
+            if needle.count >= 3, let range = result.range(of: needle) {
+                result.removeSubrange(range)
                 break
             }
+        }
+        if let regex = try? NSRegularExpression(
+            pattern: #"(?i)\b(hej|hey|hei|ej|ok|a|aj)\s*(drajw|draj|draif|draiw|dryve|drive|drivemate|drajwmejt)\b(\s*mate)?"#,
+            options: []
+        ) {
+            let ns = result as NSString
+            result = regex.stringByReplacingMatches(
+                in: result,
+                options: [],
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: ""
+            )
         }
         return result.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
     }
 
-    private func containsWakeWord(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return wakePhrases.contains { lower.contains($0) }
+    private func normalizeWakeText(_ text: String) -> String {
+        text.lowercased()
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: ".", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -551,6 +790,7 @@ extension DriveMateAssistant: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+            DriveInfoCardStore.shared.scheduleDismissAfterSpeech(delaySeconds: 1.5)
             if keepListeningAfterSpeech {
                 keepListeningAfterSpeech = false
                 activateListening()
@@ -567,6 +807,9 @@ extension DriveMateAssistant: AVSpeechSynthesizerDelegate {
         Task { @MainActor in
             music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
             keepListeningAfterSpeech = false
+            if DriveInfoCardStore.shared.isActive {
+                DriveInfoCardStore.shared.dismiss()
+            }
             if state == .speaking { state = .idle }
             isCapturingCommand = false
             resumeWakeIfNeeded()

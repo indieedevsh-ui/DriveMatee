@@ -36,8 +36,31 @@ enum CoreLM {
             case traffic
             /// Informacja o ulicy / miejscu (MapKit)
             case streetInfo
+            /// Historia / ciekawostka o ulicy
+            case streetHistory
             /// Głód / restauracja w pobliżu
             case findFood
+            /// Anuluj nasłuchiwanie asystenta
+            case cancelListening
+            /// Anuluj / zakończ aktywną trasę
+            case cancelRoute
+            /// Przywróć wcześniejszą / przerwaną trasę
+            case restoreInterruptedRoute
+            /// Limit / max prędkość na odcinku
+            case speedLimit
+            /// Szacunek kosztu paliwa na trasie
+            case fuelCost
+            /// Najbliższa stacja paliw
+            case nearestFuel
+            /// Stacje pod kątem ceny (bez live cen — lista najbliższych)
+            case cheapestFuel
+            /// Zapis modelu auta użytkownika (do spalania)
+            case setCarModel
+            /// Nawigacja do miejsca z historii wizyt (N dni temu)
+            case pastVisit
+            /// Ukryj / pokaż kafelek UI (prędkościomierz, zegar, Drive…)
+            case chromeHide
+            case chromeShow
             /// Pytanie ogólne — odpowiedź tekstowa bez zgadywania mapy
             case answer
             /// Prośba o funkcję spoza możliwości aplikacji
@@ -72,11 +95,22 @@ enum CoreLM {
                 Dostępne akcje aplikacji:
                 - navigate — dojazd / trasa / „chcę dotrzeć”, sama nazwa miejsca jako cel
                 - traffic — korki, ruch, utrudnienia
-                - streetInfo — co to za ulica, info o miejscu (MapKit)
+                - streetInfo — co to za ulica / info o miejscu (PRG, TERYT, mapa) — NIGDY unsupported
+                - streetHistory — historia / ciekawostka o ulicy (Wikipedia + rejestry) — NIGDY unsupported
                 - findFood — głód, restauracja, jedzenie w pobliżu
+                - cancelListening — „anuluj nasłuchiwanie”, „przestań słuchać”, wyłącz asystenta
+                - cancelRoute — anuluj / zakończ aktywną trasę nawigacji
+                - restoreInterruptedRoute — „przywróć wcześniejszą trasę” / przerwaną nawigację
+                - speedLimit — jaka max prędkość / limit na odcinku
+                - fuelCost — ile paliwa / koszt przejazdu na bieżącej trasie
+                - nearestFuel — najbliższa stacja paliw
+                - cheapestFuel — stacja pod kątem ceny (MapKit nie ma live cen)
+                - setCarModel — „moje auto to Toyota Corolla” / zapis modelu do spalania; destinationOrQuery = model
+                - pastVisit — „tam gdzie pojechałem 2 dni temu”; destinationOrQuery = „2” lub „wczoraj”
+                - chromeHide — ukryj kafelek UI; destinationOrQuery = nazwa (prędkościomierz / zegar / Drive / wyśrodkuj / nagrywanie). NIE ukrywaj: zakończ trasę, muzyka, skręt
+                - chromeShow — pokaż / przywróć kafelek UI; destinationOrQuery = nazwa
                 - answer — pytanie ogólne / rozmowa; NIE wymyślaj mapy; wypełnij spokenReply
-                - unsupported — prośba o coś, czego Drive Mate nie robi (pogoda poza mapą, rozmowy telefoniczne,
-                  płatności, otwieranie innych appów, „włącz radio internetowe” itd.); spokenReply z odmową
+                - unsupported — prośba o coś, czego Drive Mate nie robi; spokenReply z odmową
                 - none — pustka / szum
 
                 Nawigacja — startMode:
@@ -88,17 +122,24 @@ enum CoreLM {
                 Przykłady:
                 - „Zaczynam z swojej lokalizacji i chcę dotrzeć do Rynku Dębnickiego”
                   → navigate, destinationOrQuery=\"Rynek Dębnicki\", startMode=myLocation
-                - „Chciałbym dotrzeć do Wawelu z mojego punktu”
-                  → navigate, destinationOrQuery=\"Wawel\", startMode=myLocation
-                - „Rynek Dębnicki” / „zaprowadź mnie na rynek”
-                  → navigate, startMode=askUser
-                - „Jedź do Krakowa z dworca głównego”
-                  → navigate, destinationOrQuery=\"Kraków\", startMode=customPlace, startPlace=\"Dworzec Główny\"
+                - „Rynek Dębnicki” → navigate, startMode=askUser
                 - „jestem głodny” → findFood
+                - „anuluj nasłuchiwanie” → cancelListening
+                - „anuluj trasę” → cancelRoute
+                - „przywróć mi wcześniejszą trasę” / „wznów przerwaną trasę” → restoreInterruptedRoute
+                - „jaka jest maksymalna prędkość” → speedLimit
+                - „opowiedz historię tej ulicy” → streetHistory
+                - „co to za ulica” / „informacje o ulicy” / „ciekawostki o ulicy” → streetInfo lub streetHistory
+                - „ile będzie kosztować paliwo” → fuelCost
+                - „gdzie jest najbliższa stacja paliw” → nearestFuel
+                - „najtańsza stacja paliw” → cheapestFuel
+                - „moje auto to Toyota Corolla” → setCarModel, destinationOrQuery=\"Toyota Corolla\"
+                - „weź mnie tam gdzie pojechałem 2 dni temu” → pastVisit, destinationOrQuery=\"2\"
+                - „ukryj prędkościomierz” → chromeHide, destinationOrQuery=\"prędkościomierz\"
+                - „pokaż zegar” → chromeShow, destinationOrQuery=\"zegar\"
                 - „korki na Długiej” → traffic, destinationOrQuery=\"ulica Długa\"
-                - „jaka jest stolica Francji?” → answer + spokenReply z faktą
                 - „zadzwoń do mamy” → unsupported + spokenReply że nie umiesz dzwonić
-                - „wylosuj trasę gdziekolwiek” → unsupported albo askUser tylko jeśli to realny cel — NIE losuj miejsca
+                - „wylosuj trasę gdziekolwiek” → unsupported — NIE losuj miejsca
 
                 Zasady: nie wymyślaj miejsc; destinationOrQuery bez czasowników; confidence rzetelne.
                 """
@@ -114,7 +155,8 @@ enum CoreLM {
             instructions: """
                 Jesteś Drive Mate — asystent w aucie. Odpowiadasz po polsku, naturalnie, 1–3 zdania.
 
-                Umiesz pomóc w: nawigacji Apple Maps, korkach, info o ulicy/miejscu, restauracjach w pobliżu.
+                Umiesz pomóc w: nawigacji Apple Maps, korkach, info o ulicy/miejscu, restauracjach w pobliżu,
+                przywracaniu wcześniejszej (przerwanej) trasy.
                 Jeśli prośba wykracza poza to — powiedz wprost: „Tego jeszcze nie umiem w Drive Mate.”
                 NIGDY nie zmyślaj tras, ETA, adresów, korków ani wyników mapy.
                 Nie losuj miejsc ani wyników. Jeśli nie wiesz — przyznaj się.
@@ -180,8 +222,65 @@ enum CoreLM {
         case .streetInfo:
             return .streetInfo(query: dest.isEmpty ? nil : dest)
 
+        case .streetHistory:
+            return .streetHistory(query: dest.isEmpty ? nil : dest)
+
         case .findFood:
             return .findFood
+
+        case .cancelListening:
+            return .cancelListening
+
+        case .cancelRoute:
+            return .cancelRoute
+
+        case .restoreInterruptedRoute:
+            return .restoreInterruptedRoute
+
+        case .speedLimit:
+            return .speedLimit
+
+        case .fuelCost:
+            return .fuelCost
+
+        case .nearestFuel:
+            return .nearestFuel(preferCheapest: false)
+
+        case .cheapestFuel:
+            return .nearestFuel(preferCheapest: true)
+
+        case .setCarModel:
+            let model = dest.isEmpty
+                ? command.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)
+                : dest
+            guard !model.isEmpty else { return nil }
+            return .setCarModel(model)
+
+        case .pastVisit:
+            let raw = dest.lowercased()
+            let days: Int
+            if raw.contains("dziś") || raw.contains("dzis") || raw == "0" {
+                days = 0
+            } else if raw.contains("wczoraj") || raw == "1" {
+                days = 1
+            } else if raw.contains("przedwczoraj") {
+                days = 2
+            } else if let n = Int(raw.filter(\.isNumber)), (0...3).contains(n) {
+                days = n
+            } else {
+                days = 1
+            }
+            return .navigateToPastVisit(daysAgo: days)
+
+        case .chromeHide:
+            let q = dest.isEmpty ? command.spokenReply : dest
+            guard !q.isEmpty else { return nil }
+            return .setChromeTile(tileQuery: q, visible: false)
+
+        case .chromeShow:
+            let q = dest.isEmpty ? command.spokenReply : dest
+            guard !q.isEmpty else { return nil }
+            return .setChromeTile(tileQuery: q, visible: true)
 
         case .answer:
             let reply = command.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)

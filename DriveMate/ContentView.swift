@@ -127,6 +127,7 @@ struct ContentView: View {
                 assistant: assistant,
                 camera: camera,
                 recentPlaces: recentPlaces,
+                settings: settings,
                 isDark: settings.isDark,
                 leadingChrome: sidebarWidth + 12
             )
