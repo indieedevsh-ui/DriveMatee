@@ -4,8 +4,8 @@ import CoreLocation
 
 struct ContentView: View {
     @StateObject private var settings = AppSettings()
-    @StateObject private var library = MusicLibraryService()
-    @StateObject private var player = MusicPlayerService()
+    @ObservedObject private var library = MusicLibraryService.shared
+    @ObservedObject private var player = MusicPlayerService.shared
     @StateObject private var location = LocationSpeedService()
     @StateObject private var clips = ClipStorageService()
     @StateObject private var camera = CameraRecorderService()
@@ -112,6 +112,9 @@ struct ContentView: View {
                     camera.stopSession()
                 }
             }
+        }
+        .onAppear {
+            MechanicalClickSound.prepare()
         }
     }
 

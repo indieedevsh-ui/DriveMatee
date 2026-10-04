@@ -68,6 +68,7 @@ struct DriveIdleSetupView: View {
         .onAppear {
             autocomplete.setUserRegion(coordinate: location.coordinate)
             location.requestAccessAndStart()
+            MapComplianceStore.shared.clear()
         }
         .onChange(of: assistant.state) { _, newState in
             guard phase == .voiceListening else { return }

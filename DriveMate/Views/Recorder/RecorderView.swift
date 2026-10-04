@@ -120,6 +120,7 @@ struct RecorderView: View {
                 Spacer(minLength: 0)
 
                 Button {
+                    MechanicalClickSound.play()
                     camera.toggleContinuousRecording(clipDuration: 10)
                 } label: {
                     HStack(spacing: 8) {
@@ -144,6 +145,7 @@ struct RecorderView: View {
                 .buttonStyle(.plain)
 
                 Button {
+                    MechanicalClickSound.play()
                     withAnimation(.spring(response: 0.48, dampingFraction: 0.76)) {
                         showLibrary = true
                     }

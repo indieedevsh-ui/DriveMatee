@@ -6,13 +6,17 @@ import QuartzCore
 final class LimeRouteRenderer: MKPolylineRenderer {
     var routeColor: UIColor = DriveMatePalette.limeRouteUI
     private var _drawProgress: CGFloat = 1
+    private var cachedLengths: [CGFloat] = []
+    private var cachedTotal: CGFloat = 0
+    private var cachedPointCount: Int = 0
 
     var drawProgress: CGFloat {
         get { _drawProgress }
         set {
             let clamped = min(max(newValue, 0), 1)
-            guard abs(clamped - _drawProgress) > 0.002 else { return }
+            guard abs(clamped - _drawProgress) > 0.001 else { return }
             _drawProgress = clamped
+            // Pełny invalidation — częściowy setNeedsDisplay bywa pomijany przy szybkich update’ach kamery.
             setNeedsDisplay()
         }
     }
@@ -23,38 +27,29 @@ final class LimeRouteRenderer: MKPolylineRenderer {
             return
         }
 
+        rebuildLengthCacheIfNeeded(polyline)
+
+        let target = cachedTotal * _drawProgress
+        guard target > 1, cachedTotal > 0 else { return }
+
         var coords = [CLLocationCoordinate2D](
             repeating: kCLLocationCoordinate2DInvalid,
             count: polyline.pointCount
         )
         polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
 
-        var segmentLengths: [CGFloat] = []
-        var total: CGFloat = 0
-        for i in 1..<coords.count {
-            let a = MKMapPoint(coords[i - 1])
-            let b = MKMapPoint(coords[i])
-            let d = hypot(b.x - a.x, b.y - a.y)
-            segmentLengths.append(CGFloat(d))
-            total += CGFloat(d)
-        }
-        guard total > 0 else { return }
-
-        let target = total * _drawProgress
-        guard target > 0.5 else { return }
-
         let path = CGMutablePath()
         var traveled: CGFloat = 0
         path.move(to: point(for: MKMapPoint(coords[0])))
 
         for i in 1..<coords.count {
-            let seg = segmentLengths[i - 1]
+            let seg = cachedLengths[i - 1]
             let nextTravel = traveled + seg
-            if nextTravel <= target {
+            if nextTravel <= target + 0.01 {
                 path.addLine(to: point(for: MKMapPoint(coords[i])))
                 traveled = nextTravel
             } else {
-                let remain = target - traveled
+                let remain = max(0, target - traveled)
                 let t = seg > 0 ? remain / seg : 0
                 let a = MKMapPoint(coords[i - 1])
                 let b = MKMapPoint(coords[i])
@@ -69,12 +64,34 @@ final class LimeRouteRenderer: MKPolylineRenderer {
 
         context.saveGState()
         context.setStrokeColor(routeColor.cgColor)
-        context.setLineWidth(max(8, lineWidth) / zoomScale)
+        // Stała grubość na ekranie
+        let width = max(lineWidth, 9) / zoomScale
+        context.setLineWidth(width)
         context.setLineCap(.round)
         context.setLineJoin(.round)
+        context.setShouldAntialias(true)
         context.addPath(path)
         context.strokePath()
         context.restoreGState()
+    }
+
+    private func rebuildLengthCacheIfNeeded(_ polyline: MKPolyline) {
+        guard polyline.pointCount != cachedPointCount || cachedLengths.isEmpty else { return }
+        cachedPointCount = polyline.pointCount
+        var coords = [CLLocationCoordinate2D](
+            repeating: kCLLocationCoordinate2DInvalid,
+            count: polyline.pointCount
+        )
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
+        cachedLengths.removeAll(keepingCapacity: true)
+        cachedTotal = 0
+        for i in 1..<coords.count {
+            let a = MKMapPoint(coords[i - 1])
+            let b = MKMapPoint(coords[i])
+            let d = CGFloat(hypot(b.x - a.x, b.y - a.y))
+            cachedLengths.append(d)
+            cachedTotal += d
+        }
     }
 }
 
@@ -124,9 +141,16 @@ struct MapDriveView: View {
     @ObservedObject var location: LocationSpeedService
     @ObservedObject var mapState: NavigationMapState
     var isDark: Bool
+    /// Gdy panel muzyki jest widoczny — pastylka Legal unosi się wyżej.
+    var musicBarVisible: Bool = false
+    /// Wyrównanie do chrome (sidebar) — lekko odklejone od lewej treści.
+    var leadingChrome: CGFloat = 168
     var onUserInteraction: (() -> Void)? = nil
 
     @State private var showLegal = false
+
+    /// Ten sam dolny offset co przycisk „Zakończ trasę”.
+    private var legalBottomPadding: CGFloat { musicBarVisible ? 118 : 22 }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -168,10 +192,18 @@ struct MapDriveView: View {
                 .liquidGlassCapsule(.clear)
             }
             .buttonStyle(.plain)
-            .padding(.leading, 168)
-            .padding(.bottom, 12)
+            .padding(.leading, leadingChrome + 10)
+            .padding(.bottom, legalBottomPadding)
+            .animation(.spring(response: 0.42, dampingFraction: 0.86), value: musicBarVisible)
         }
-        .onAppear { location.requestAccessAndStart() }
+        .onAppear {
+            location.requestAccessAndStart()
+            // Animacja rysowania linii — dopiero gdy mapa jest na ekranie.
+            mapState.startRouteRevealWhenMapReady()
+        }
+        .onChange(of: mapState.routeRevealRequestID) { _, _ in
+            mapState.startRouteRevealWhenMapReady()
+        }
         .sheet(isPresented: $showLegal) {
             NavigationStack {
                 List {
@@ -226,6 +258,8 @@ struct AppleMapsView: UIViewRepresentable {
         map.layoutMargins = UIEdgeInsets(top: 0, left: 160, bottom: 110, right: 48)
         map.overrideUserInterfaceStyle = isDark ? .dark : .light
         map.mapType = .standard
+        // Atrybucja tylko w pastylce liquid glass — ukryj natywne logo Apple Maps.
+        Self.hideNativeAppleMapsChrome(in: map)
 
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
         pan.delegate = context.coordinator
@@ -242,6 +276,7 @@ struct AppleMapsView: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         map.overrideUserInterfaceStyle = isDark ? .dark : .light
         map.showsTraffic = showsTraffic
+        Self.hideNativeAppleMapsChrome(in: map)
         context.coordinator.onUserPan = onUserPan
         context.coordinator.onUserInteraction = onUserInteraction
         context.coordinator.isFollowingUser = isFollowingUser
@@ -264,6 +299,22 @@ struct AppleMapsView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Ukrywa systemowe logo / etykietę Apple Maps — zostaje tylko nasza pastylka Legal.
+    static func hideNativeAppleMapsChrome(in map: MKMapView) {
+        func hide(_ view: UIView) {
+            let name = NSStringFromClass(type(of: view))
+            if name.contains("Attribution")
+                || name.contains("AppleLogo")
+                || name.contains("LogoImage")
+                || name.contains("MKOverlayLabel") {
+                view.isHidden = true
+                view.alpha = 0
+            }
+            view.subviews.forEach(hide)
+        }
+        map.subviews.forEach(hide)
+    }
 
     final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var onUserPan: (() -> Void)?
@@ -317,9 +368,11 @@ struct AppleMapsView: UIViewRepresentable {
         ) {
             pendingDrawProgress = routeDrawProgress
 
-            let routeHash = (routePolyline?.pointCount ?? 0)
-                ^ (turnManeuvers.count << 10)
-                ^ Int((destinationCoordinate?.latitude ?? 0) * 10_000)
+            let routeHash = Self.contentHash(
+                polyline: routePolyline,
+                destination: destinationCoordinate,
+                maneuverCount: turnManeuvers.count
+            )
 
             if routeHash != lastRouteHash {
                 lastRouteHash = routeHash
@@ -344,6 +397,9 @@ struct AppleMapsView: UIViewRepresentable {
 
             if let renderer = primaryRouteRenderer {
                 renderer.drawProgress = routeDrawProgress
+            } else if routePolyline != nil, isAnimatingRouteReveal {
+                // Renderer jeszcze nie powstał — wymuś odświeżenie overlayi przy następnym cyklu.
+                map.setNeedsDisplay()
             }
 
             if !isAnimatingRouteReveal, turnAnnotations.isEmpty, !turnManeuvers.isEmpty {
@@ -482,6 +538,26 @@ struct AppleMapsView: UIViewRepresentable {
             }
         }
 
+        private static func contentHash(
+            polyline: MKPolyline?,
+            destination: CLLocationCoordinate2D?,
+            maneuverCount: Int
+        ) -> Int {
+            var h = maneuverCount &<< 10
+            if let destination {
+                h ^= Int(destination.latitude * 100_000)
+                h ^= Int(destination.longitude * 100_000)
+            }
+            if let polyline, polyline.pointCount > 0 {
+                h ^= polyline.pointCount
+                let pts = polyline.points()
+                h ^= Int(pts[0].x / 50)
+                h ^= Int(pts[polyline.pointCount - 1].y / 50)
+                h ^= Int(polyline.boundingMapRect.size.width / 25)
+            }
+            return h
+        }
+
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let polyline = overlay as? MKPolyline else {
                 return MKOverlayRenderer(overlay: overlay)
@@ -489,8 +565,9 @@ struct AppleMapsView: UIViewRepresentable {
             let isPrimary = mapView.overlays.first(where: { $0 is MKPolyline }) === overlay
             if isPrimary {
                 let renderer = LimeRouteRenderer(polyline: polyline)
-                renderer.lineWidth = 10
+                renderer.lineWidth = 11
                 renderer.routeColor = DriveMatePalette.limeRouteUI
+                // Start od aktualnego postępu (0 na początku animacji).
                 renderer.drawProgress = pendingDrawProgress
                 primaryRouteRenderer = renderer
                 return renderer

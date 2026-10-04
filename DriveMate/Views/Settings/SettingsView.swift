@@ -252,7 +252,7 @@ struct SettingsView: View {
                     Text("Autowyciszacz")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .modifier(SettingsPrimaryText())
-                    Text("Wycisza muzykę gdy asystent chce poinformować kierowcę")
+                    Text("Ścisza muzykę gdy asystent mówi — nadal gra cicho w tle")
                         .font(.system(size: 13, weight: .medium))
                         .modifier(SettingsSecondaryText())
                         .fixedSize(horizontal: false, vertical: true)

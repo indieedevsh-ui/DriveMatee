@@ -6,43 +6,73 @@ import Combine
 
 struct SpeedBadge: View {
     let speedKmh: Int
+    var isSpeeding: Bool = false
+    var pulseScale: CGFloat = 1
+
+    private var accent: Color {
+        isSpeeding ? Color(red: 1.0, green: 0.12, blue: 0.14) : DriveMatePalette.neonGreen
+    }
+    private var accentMid: Color {
+        isSpeeding ? Color(red: 0.92, green: 0.08, blue: 0.12) : DriveMatePalette.neonGreenMid
+    }
+    private var accentDeep: Color {
+        isSpeeding ? Color(red: 0.55, green: 0.02, blue: 0.06) : DriveMatePalette.neonGreenDeep
+    }
+    private var valueColor: Color {
+        isSpeeding ? Color(red: 1.0, green: 0.08, blue: 0.1) : Color.black.opacity(0.9)
+    }
+    private var unitColor: Color {
+        isSpeeding ? Color(red: 0.95, green: 0.15, blue: 0.18) : Color.black.opacity(0.55)
+    }
 
     var body: some View {
         VStack(spacing: 2) {
             Text("\(speedKmh)")
                 .font(.system(size: 28, weight: .black, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.9))
+                .foregroundStyle(valueColor)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
                 .monospacedDigit()
             Text("KM/H")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.55))
+                .foregroundStyle(unitColor)
                 .tracking(0.6)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(minWidth: 108, minHeight: 64)
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            DriveMatePalette.neonGreen.opacity(0.5),
-                            DriveMatePalette.neonGreenMid.opacity(0.28),
-                            DriveMatePalette.neonGreenDeep.opacity(0.14)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+            ZStack {
+                // 60% regular liquid glass — słabsze niż pełne clear na innych kafelkach
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.clear)
+                    .liquidGlassRect(cornerRadius: 18, .regular)
+                    .opacity(0.60)
+
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(isSpeeding ? 0.62 : 0.5),
+                                accentMid.opacity(isSpeeding ? 0.4 : 0.28),
+                                accentDeep.opacity(isSpeeding ? 0.28 : 0.14)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .liquidGlassRect(cornerRadius: 18, .clear)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.4), lineWidth: 1)
-                }
-                .shadow(color: DriveMatePalette.neonGreen.opacity(0.32), radius: 8, y: 2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(
+                        isSpeeding ? accent.opacity(0.85) : Color.white.opacity(0.4),
+                        lineWidth: isSpeeding ? 1.4 : 1
+                    )
+            }
+            .shadow(color: accent.opacity(isSpeeding ? 0.55 : 0.32), radius: isSpeeding ? 12 : 8, y: 2)
         }
+        .scaleEffect(pulseScale)
         .accessibilityLabel("Prędkość \(speedKmh) kilometrów na godzinę")
     }
 }
@@ -86,21 +116,29 @@ struct MusicControlsBar: View {
     var body: some View {
         HStack(spacing: 0) {
             Spacer(minLength: 0)
-            metallicButton(systemName: "backward.fill", size: 22) { player.previous() }
+            metallicButton(systemName: "backward.fill", size: 32) {
+                MechanicalClickSound.play()
+                player.previous(andPlay: player.isPlaying)
+            }
             Spacer(minLength: 0)
-            metallicButton(systemName: player.isPlaying ? "pause.fill" : "play.fill", size: 28) {
+            metallicButton(systemName: player.isPlaying ? "pause.fill" : "play.fill", size: 40) {
+                MechanicalClickSound.play()
                 player.togglePlayPause()
             }
             Spacer(minLength: 0)
-            metallicButton(systemName: "forward.fill", size: 22) { player.next() }
+            metallicButton(systemName: "forward.fill", size: 32) {
+                MechanicalClickSound.play()
+                player.next(andPlay: player.isPlaying)
+            }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 14)
-        .frame(maxWidth: 380)
-        .liquidGlassRect(cornerRadius: 24, .clear.interactive())
+        .padding(.horizontal, 36)
+        .padding(.vertical, 20)
+        .frame(maxWidth: 480)
+        .frame(minHeight: 96)
+        .liquidGlassRect(cornerRadius: 30, .clear.interactive())
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .stroke(
                     LinearGradient(
                         colors: [
@@ -130,7 +168,7 @@ struct MusicControlsBar: View {
                     )
                 )
                 .shadow(color: .black.opacity(0.45), radius: 2, y: 2)
-                .frame(width: 48, height: 48)
+                .frame(width: 68, height: 68)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -204,22 +242,32 @@ struct DriveView: View {
     @State private var musicHideTask: Task<Void, Never>?
     @State private var tripSummary: TripSummary?
     @State private var idleVoiceMode = false
+    @State private var isSpeeding = false
+    @State private var speedPulseScale: CGFloat = 1
+    @State private var lastSpeedWarningAt: Date?
+    @State private var speedPulseTask: Task<Void, Never>?
     @ObservedObject private var mapCompliance = MapComplianceStore.shared
     @ObservedObject private var restaurantOffer = RestaurantOfferService.shared
     @ObservedObject private var gasOffer = GasStationOfferService.shared
     @ObservedObject private var infoCard = DriveInfoCardStore.shared
     @ObservedObject private var chromeVisibility = DriveChromeVisibilityStore.shared
 
+    /// Szacowany limit (MapKit nie podaje znaku) — teren zabudowany.
+    private let assumedSpeedLimitKmh = 50
+    private let speedGraceKmh = 3
+
     private var isNavigating: Bool { mapState.isNavigating }
     private var showingTripEnd: Bool { tripSummary != nil }
     private var showAvatarTopTrailing: Bool {
-        // Oczy przy aktywnym asystencie — także podczas nawigacji (po Hey Drive)
+        // Kafelek Drive Mate (oczy + minka) przy aktywnym asystencie w sekcji Drive
         !showingTripEnd
             && (idleVoiceMode || (assistant.isAvatarVisible && !assistant.isWakeListening))
     }
     private var showComplianceMap: Bool {
+        // Bez mini-mapki przy konfiguracji trasy / wyborze celu — zostaw tylko podgląd korków.
         !isNavigating
-            && mapCompliance.surface != nil
+            && !showingTripEnd
+            && mapCompliance.surface?.showsTraffic == true
             && !restaurantOffer.isActive
             && !gasOffer.isActive
             && !infoCard.isActive
@@ -249,6 +297,8 @@ struct DriveView: View {
                     location: location,
                     mapState: mapState,
                     isDark: isDark,
+                    musicBarVisible: isMusicBarVisible,
+                    leadingChrome: leadingChrome,
                     onUserInteraction: { revealMusicBar() }
                 )
                 .ignoresSafeArea()
@@ -298,27 +348,30 @@ struct DriveView: View {
                 .allowsHitTesting(true)
             }
 
-            // Oczy Drive Mate — dół, wyśrodkowane na osi X (w obszarze mapy)
+            // Drive Mate — kafelek liquid glass u góry (oczy + minka), tylko sekcja Drive
             if showAvatarTopTrailing {
                 VStack {
-                    Spacer(minLength: 0)
-                    DriveMateAvatar(
-                        isVisible: assistant.isAvatarVisible || idleVoiceMode,
-                        mood: assistant.avatarMood,
-                        speechGlow: max(assistant.speechGlow, assistant.audioLevel),
-                        eyesOnly: true,
-                        eyesDelay: 0
-                    )
-                    .padding(.bottom, isNavigating ? 30 : 36)
-                    .onTapGesture {
-                        assistant.toggleListening()
+                    HStack {
+                        Spacer(minLength: 0)
+                        DriveMateAvatar(
+                            isVisible: assistant.isAvatarVisible || idleVoiceMode,
+                            mood: assistant.avatarMood,
+                            speechGlow: max(assistant.speechGlow, assistant.audioLevel),
+                            eyesOnly: false,
+                            eyesDelay: 0
+                        )
+                        .onTapGesture {
+                            assistant.toggleListening()
+                        }
+                        Spacer(minLength: 0)
                     }
+                    .padding(.leading, leadingChrome)
+                    .padding(.top, 6)
+                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.leading, leadingChrome)
-                .ignoresSafeArea(edges: .bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .zIndex(20)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .transition(.opacity.combined(with: .move(edge: .top)))
                 .allowsHitTesting(true)
             }
 
@@ -425,8 +478,14 @@ struct DriveView: View {
                 assistant.setNavigationWakeListening(true)
                 musicHideTask?.cancel()
                 isMusicBarVisible = false
+                isSpeeding = false
+                speedPulseScale = 1
             }
         }
+        .onChange(of: location.speedKmh) { _, speed in
+            handleSpeedLimitMonitor(speedKmh: speed)
+        }
+        .animation(.easeInOut(duration: 0.22), value: isSpeeding)
         .onAppear {
             mapState.updateGuidance(userCoordinate: location.coordinate)
             assistant.setNavigationWakeListening(true)
@@ -478,6 +537,20 @@ struct DriveView: View {
                 )
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .driveMateDidNavigate)) { note in
+            // Przywrócenie trasy / nowa nawigacja — nigdy nie zostawiaj ekranu podsumowania.
+            if tripSummary != nil {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
+                    tripSummary = nil
+                }
+            }
+            if note.userInfo?["restoredRoute"] as? Bool == true {
+                revealMusicBar()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .driveMateDidControlMusic)) { _ in
+            revealMusicBar(holdSeconds: 5.5)
+        }
     }
 
     @ViewBuilder
@@ -486,8 +559,12 @@ struct DriveView: View {
             HStack(alignment: .top) {
                 HStack(spacing: 10) {
                     if chromeVisibility.isVisible(.speedometer) {
-                        SpeedBadge(speedKmh: location.speedKmh)
-                            .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                        SpeedBadge(
+                            speedKmh: location.speedKmh,
+                            isSpeeding: isSpeeding,
+                            pulseScale: speedPulseScale
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
                     }
                     if chromeVisibility.isVisible(.clock) {
                         ClockBadge()
@@ -536,20 +613,20 @@ struct DriveView: View {
                     }
                 }
                 .padding(.trailing, 28)
-                .padding(.bottom, isMusicBarVisible ? 88 : 22)
+                .padding(.bottom, isMusicBarVisible ? 118 : 22)
             }
         }
         .zIndex(15)
-        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: isMusicBarVisible)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: isMusicBarVisible)
 
         if isMusicBarVisible {
             VStack {
                 Spacer(minLength: 0)
                     .allowsHitTesting(false)
-                MusicControlsBar(player: player, hasTracks: !library.tracks.isEmpty)
+                MusicControlsBar(player: player, hasTracks: player.hasTracks || !library.tracks.isEmpty)
                     .padding(.leading, leadingChrome + 8)
-                    .padding(.trailing, 40)
-                    .padding(.bottom, 16)
+                    .padding(.trailing, 36)
+                    .padding(.bottom, 14)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
@@ -605,7 +682,7 @@ struct DriveView: View {
         }
     }
 
-    private func revealMusicBar() {
+    private func revealMusicBar(holdSeconds: Double = 4.0) {
         guard mapState.isNavigating else { return }
         if !isMusicBarVisible {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.86)) {
@@ -613,12 +690,58 @@ struct DriveView: View {
             }
         }
         musicHideTask?.cancel()
+        let holdNs = UInt64(max(1.5, holdSeconds) * 1_000_000_000)
         musicHideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            try? await Task.sleep(nanoseconds: holdNs)
             guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.28)) {
                 isMusicBarVisible = false
             }
         }
+    }
+
+    private func handleSpeedLimitMonitor(speedKmh: Int) {
+        guard isNavigating, !showingTripEnd else {
+            if isSpeeding {
+                isSpeeding = false
+                speedPulseScale = 1
+            }
+            return
+        }
+
+        let over = speedKmh > assumedSpeedLimitKmh + speedGraceKmh
+        let wasSpeeding = isSpeeding
+        isSpeeding = over
+
+        guard over else { return }
+
+        // Puls przy wejściu w przekroczenie
+        if !wasSpeeding {
+            pulseSpeedBadge()
+        }
+        announceSlowDownIfNeeded()
+    }
+
+    private func pulseSpeedBadge() {
+        speedPulseTask?.cancel()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.55)) {
+            speedPulseScale = 1.22
+        }
+        speedPulseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 380_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) {
+                speedPulseScale = 1.0
+            }
+        }
+    }
+
+    private func announceSlowDownIfNeeded() {
+        let now = Date()
+        if let last = lastSpeedWarningAt, now.timeIntervalSince(last) < 35 {
+            return
+        }
+        lastSpeedWarningAt = now
+        assistant.announceNavigation("Zwolnij trochę — jedziesz za szybko.")
     }
 }

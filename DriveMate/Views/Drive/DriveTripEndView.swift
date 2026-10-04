@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import UIKit
 
 /// Overlay po zakończeniu trasy: animowane podsumowanie → przyciski menu / parkingi.
 struct DriveTripEndView: View {
@@ -17,14 +18,36 @@ struct DriveTripEndView: View {
     }
 
     @State private var phase: Phase = .summary
-    @State private var showDuration = false
+    /// Dwie osobne animacje podsumowania.
+    @State private var summaryAct: SummaryAct = .flag
+
+    // Akt 1 — limonkowa flaga z autkiem
+    @State private var flagScale: CGFloat = 0.08
+    @State private var flagOpacity: Double = 1
+    @State private var flagWaveActive = false
+
+    // Akt 2 — kafelki (osobny bounce na każdy)
+    @State private var showDistance = false
     @State private var showSpeed = false
+    @State private var distanceScale: CGFloat = 0.92
+    @State private var speedScale: CGFloat = 0.92
     @State private var summaryOpacity: Double = 1
     @State private var actionsAppear = false
     @State private var parkings: [ParkingOption] = []
     @State private var isSearchingParking = false
     @State private var parkingError: String?
     @State private var parkingAppear = false
+
+    /// Retencja generatorów — lokalne obiekty bywają dealokowane zanim haptyka zdąży odpalić.
+    private static let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
+    private static let rigidHaptic = UIImpactFeedbackGenerator(style: .rigid)
+    private static let softHaptic = UIImpactFeedbackGenerator(style: .soft)
+    private static let notifyHaptic = UINotificationFeedbackGenerator()
+
+    private enum SummaryAct: Equatable {
+        case flag
+        case tiles
+    }
 
     var body: some View {
         ZStack {
@@ -48,39 +71,64 @@ struct DriveTripEndView: View {
         .task { await runSummarySequence() }
     }
 
-    // MARK: - Summary
+    // MARK: - Summary (dwa akty animacji)
 
     private var summaryPhase: some View {
-        VStack(spacing: 28) {
-            Spacer(minLength: 0)
-
-            Text("Podsumowanie trasy")
-                .font(.system(size: 15, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.55))
-                .opacity(showDuration ? 1 : 0)
-
-            VStack(spacing: 18) {
-                summaryCard(
-                    title: "Czas przejazdu",
-                    value: summary.durationLabel,
-                    subtitle: "na dystansie \(summary.distanceLabel)",
-                    visible: showDuration
-                )
-
-                summaryCard(
-                    title: "Średnia prędkość",
-                    value: summary.averageSpeedLabel,
-                    subtitle: summary.destinationTitle.map { "do: \($0)" } ?? "cała trasa",
-                    visible: showSpeed
-                )
+        ZStack {
+            // AKT 1 — limonkowa flaga z autkiem
+            if summaryAct == .flag {
+                TripSummaryCarFlagView(waveActive: flagWaveActive)
+                    .scaleEffect(flagScale)
+                    .opacity(flagOpacity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
             }
-            .frame(maxWidth: 420)
 
-            Spacer(minLength: 0)
+            // AKT 2 — kafelki
+            if summaryAct == .tiles {
+                VStack(spacing: 18) {
+                    Text("Podsumowanie trasy")
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .opacity(showDistance ? 1 : 0)
+                        .padding(.top, 36)
+
+                    Spacer(minLength: 0)
+
+                    VStack(spacing: 16) {
+                        summaryCard(
+                            title: "Długość trasy",
+                            value: summary.distanceLabel,
+                            subtitle: "czas \(summary.durationLabel)",
+                            visible: showDistance,
+                            bounceScale: distanceScale
+                        )
+
+                        summaryCard(
+                            title: "Średnia prędkość",
+                            value: summary.averageSpeedLabel,
+                            subtitle: summary.destinationTitle.map { "do: \($0)" } ?? "cała trasa",
+                            visible: showSpeed,
+                            bounceScale: speedScale
+                        )
+                    }
+                    .frame(maxWidth: 420)
+                    .padding(.horizontal, 20)
+
+                    Spacer(minLength: 0)
+                }
+                .transition(.opacity)
+            }
         }
     }
 
-    private func summaryCard(title: String, value: String, subtitle: String, visible: Bool) -> some View {
+    private func summaryCard(
+        title: String,
+        value: String,
+        subtitle: String,
+        visible: Bool,
+        bounceScale: CGFloat
+    ) -> some View {
         VStack(spacing: 8) {
             Text(title)
                 .font(.system(size: 14, weight: .medium))
@@ -100,11 +148,16 @@ struct DriveTripEndView: View {
         .liquidGlassRect(cornerRadius: 24, .clear)
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.9)
+                .stroke(
+                    visible
+                        ? DriveMatePalette.limeRoute.opacity(0.45)
+                        : Color.white.opacity(0.18),
+                    lineWidth: 0.9
+                )
         }
-        .scaleEffect(visible ? 1 : 0.72)
+        .scaleEffect(visible ? bounceScale : 0.88)
         .opacity(visible ? 1 : 0)
-        .offset(y: visible ? 0 : 24)
+        .offset(y: visible ? 0 : -120)
     }
 
     // MARK: - Actions
@@ -134,7 +187,10 @@ struct DriveTripEndView: View {
     }
 
     private func tripActionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            MechanicalClickSound.play()
+            action()
+        } label: {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
                     .font(.system(size: 20, weight: .semibold))
@@ -262,27 +318,122 @@ struct DriveTripEndView: View {
         }
     }
 
-    // MARK: - Sequence
+    // MARK: - Sequence (akt 1: flaga → akt 2: kafelki)
 
     private func runSummarySequence() async {
+        Self.heavyHaptic.prepare()
+        Self.rigidHaptic.prepare()
+        Self.softHaptic.prepare()
+        Self.notifyHaptic.prepare()
+
+        // ═══════════════════════════════════════
+        // AKT 1 — limonkowa flaga z autkiem
+        // ═══════════════════════════════════════
+        summaryAct = .flag
+        flagOpacity = 1
+        flagScale = 0.08
+        flagWaveActive = false
+
+        // Krótka chwila na pojawienie się overlay — potem boom + spring
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        flagWaveActive = true
+        withAnimation(.spring(response: 0.48, dampingFraction: 0.52)) {
+            flagScale = 1.14
+        }
+        // Mocna haptyka przez cały „wybuch” flagi (statyczne generatory = pewny trigger)
+        fireFlagHaptics()
+
+        try? await Task.sleep(nanoseconds: 420_000_000)
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.72)) {
+            flagScale = 1.0
+        }
+
+        // Flaga faluje — lekkie impulsy w rytmie
+        for _ in 0..<4 {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            Self.softHaptic.impactOccurred(intensity: 0.55)
+        }
+
+        withAnimation(.easeIn(duration: 0.28)) {
+            flagOpacity = 0
+            flagScale = 1.18
+        }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        flagWaveActive = false
+
+        // ═══════════════════════════════════════
+        // AKT 2 — kafelki (góra → bounce, dół → bounce)
+        // ═══════════════════════════════════════
+        withAnimation(.easeOut(duration: 0.12)) {
+            summaryAct = .tiles
+        }
+        try? await Task.sleep(nanoseconds: 60_000_000)
+
+        await bounceTileIn(which: .distance)
         try? await Task.sleep(nanoseconds: 280_000_000)
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
-            showDuration = true
-        }
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) {
-            showSpeed = true
-        }
-        // Obie informacje widoczne → 3 s, potem znikają
-        try? await Task.sleep(nanoseconds: 3_000_000_000)
-        withAnimation(.easeInOut(duration: 0.45)) {
+        await bounceTileIn(which: .speed)
+
+        // Chwila na odczyt
+        try? await Task.sleep(nanoseconds: 1_800_000_000)
+
+        withAnimation(.easeInOut(duration: 0.4)) {
             summaryOpacity = 0
         }
-        try? await Task.sleep(nanoseconds: 480_000_000)
+        try? await Task.sleep(nanoseconds: 420_000_000)
         phase = .actions
         withAnimation(.spring(response: 0.5, dampingFraction: 0.84)) {
             actionsAppear = true
         }
+    }
+
+    private func fireFlagHaptics() {
+        Self.rigidHaptic.prepare()
+        Self.heavyHaptic.prepare()
+        Self.notifyHaptic.prepare()
+
+        Self.rigidHaptic.impactOccurred(intensity: 1.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            Self.heavyHaptic.impactOccurred(intensity: 1.0)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+            Self.heavyHaptic.impactOccurred(intensity: 1.0)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            Self.notifyHaptic.notificationOccurred(.success)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            Self.rigidHaptic.impactOccurred(intensity: 0.95)
+        }
+    }
+
+    private enum BounceTile { case distance, speed }
+
+    private func bounceTileIn(which: BounceTile) async {
+        switch which {
+        case .distance: distanceScale = 0.9
+        case .speed: speedScale = 0.9
+        }
+        withAnimation(.spring(response: 0.48, dampingFraction: 0.72)) {
+            switch which {
+            case .distance:
+                showDistance = true
+                distanceScale = 1.1
+            case .speed:
+                showSpeed = true
+                speedScale = 1.1
+            }
+        }
+        Self.heavyHaptic.impactOccurred(intensity: 1.0)
+        try? await Task.sleep(nanoseconds: 280_000_000)
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.78)) {
+            switch which {
+            case .distance: distanceScale = 1.0
+            case .speed: speedScale = 1.0
+            }
+        }
+        Self.softHaptic.impactOccurred(intensity: 0.7)
+        try? await Task.sleep(nanoseconds: 220_000_000)
     }
 
     private func searchParking() async {
@@ -318,11 +469,132 @@ struct DriveTripEndView: View {
     }
 }
 
+// MARK: - Limonkowa flaga z autkiem (powiększenie + falowanie)
+
+private struct TripSummaryCarFlagView: View {
+    var waveActive: Bool
+
+    private var lime: Color { DriveMatePalette.limeRoute }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !waveActive)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let wave = waveActive ? sin(t * 5.2) : 0
+            let flutter = waveActive ? sin(t * 8.4 + 0.7) : 0
+
+            ZStack {
+                // Miękki blask
+                Circle()
+                    .fill(lime.opacity(0.14 + abs(wave) * 0.08))
+                    .frame(width: 220, height: 220)
+                    .blur(radius: 28)
+
+                HStack(alignment: .bottom, spacing: 0) {
+                    // Maszt
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.55),
+                                    Color.white.opacity(0.22)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 7, height: 168)
+                        .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
+
+                    // Płótno flagi — faluje od masztu
+                    ZStack {
+                        flagCloth(wave: CGFloat(wave), flutter: CGFloat(flutter))
+
+                        Image(systemName: "car.fill")
+                            .font(.system(size: 34, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .offset(x: 4 + CGFloat(flutter) * 2, y: CGFloat(wave) * 2)
+                    }
+                    .frame(width: 118, height: 78)
+                    .padding(.bottom, 78)
+                    // Kotwica przy maszcie — prawa krawędź „macha”
+                    .rotation3DEffect(
+                        .degrees(wave * 14),
+                        axis: (x: 0, y: 1, z: 0),
+                        anchor: .leading,
+                        perspective: 0.45
+                    )
+                    .rotationEffect(.degrees(flutter * 3.2), anchor: .leading)
+                    .offset(y: CGFloat(wave) * 3)
+                }
+                .shadow(color: lime.opacity(0.55), radius: 18, y: 0)
+                .shadow(color: lime.opacity(0.28), radius: 36, y: 8)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func flagCloth(wave: CGFloat, flutter: CGFloat) -> some View {
+        Canvas { ctx, size in
+            let w = size.width
+            let h = size.height
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: 0))
+
+            // Górna krawędź z falą
+            let segments = 10
+            for i in 1...segments {
+                let x = w * CGFloat(i) / CGFloat(segments)
+                let amp = (x / w) * 7
+                let y = sin((x / w) * .pi * 1.6 + wave * 1.8) * amp
+                    + flutter * amp * 0.35
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+
+            // Prawa krawędź (lekko wcięta przy fali)
+            let tipInset = 4 + abs(wave) * 3
+            path.addLine(to: CGPoint(x: w - tipInset, y: h * 0.5 + flutter * 4))
+
+            // Dolna krawędź z falą
+            for i in (0..<segments).reversed() {
+                let x = w * CGFloat(i) / CGFloat(segments)
+                let amp = (x / w) * 7
+                let y = h + sin((x / w) * .pi * 1.6 + wave * 1.8 + 0.4) * amp
+                    - flutter * amp * 0.25
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            path.closeSubpath()
+
+            ctx.fill(path, with: .color(lime.opacity(0.95)))
+            ctx.stroke(
+                path,
+                with: .color(Color.white.opacity(0.28)),
+                lineWidth: 1.2
+            )
+
+            // Delikatne fałdy
+            for i in 1..<4 {
+                let x = w * CGFloat(i) / 4.5
+                var crease = Path()
+                crease.move(to: CGPoint(x: x, y: 6))
+                crease.addQuadCurve(
+                    to: CGPoint(x: x + wave * 3, y: h - 6),
+                    control: CGPoint(x: x + flutter * 5, y: h * 0.5)
+                )
+                ctx.stroke(crease, with: .color(Color.black.opacity(0.12)), lineWidth: 1)
+            }
+        }
+    }
+}
+
 struct EndRouteButton: View {
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            MechanicalClickSound.play()
+            action()
+        } label: {
             Text("Zakończ trasę")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)

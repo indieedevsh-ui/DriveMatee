@@ -96,12 +96,11 @@ final class PolishSpeechRecognizer: NSObject, ObservableObject {
         do {
             let session = AVAudioSession.sharedInstance()
             // spokenAudio działa znacznie lepiej niż measurement dla wake word
+            // mixWithOthers — muzyka w aplikacji gra dalej (ściszenie robi MusicPlayerService.duck).
             try session.setCategory(
                 .playAndRecord,
                 mode: .spokenAudio,
-                options: mode == .wakeSpot
-                    ? [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP]
-                    : [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP]
+                options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP]
             )
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {

@@ -17,9 +17,10 @@ struct SidebarView: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
-            // Równomiernie na CAŁĄ wysokość — dłuższe marginesy = wyższy pasek.
-            let vPad: CGFloat = 20
+            // Większy vPad → pełna wysokość fali także dla DRIVE / SETTINGS (nie skraca przy krawędziach).
             let gap: CGFloat = 8
+            let edgeReserve: CGFloat = 40
+            let vPad: CGFloat = max(36, edgeReserve)
             let itemH = max(72, (h - vPad * 2 - gap * 2) / 3)
 
             ZStack(alignment: .topLeading) {
@@ -37,6 +38,7 @@ struct SidebarView: View {
                     ForEach(AppTab.allCases) { tab in
                         let isActive = selected == tab
                         Button {
+                            MechanicalClickSound.play()
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
                                 selected = tab
                             }
@@ -134,22 +136,9 @@ private struct SidebarPath: Shape {
         let w = rect.width - bulgeWidth
         let h = rect.height
         let baseR: CGFloat = 28
-        let edgePad = baseR + 6
 
-        // Symetryczna wypukłość wokół środka — ta sama fala dla Drive / Record / Settings.
-        var half = bulgeHeight / 2
-        if bulgeCenterY - half < edgePad {
-            half = max(28, bulgeCenterY - edgePad)
-        }
-        if bulgeCenterY + half > h - edgePad {
-            half = max(28, h - edgePad - bulgeCenterY)
-        }
-        // Użyj mniejszej półwysokości, żeby obie strony były równe
-        let topLimit = bulgeCenterY - edgePad
-        let bottomLimit = h - edgePad - bulgeCenterY
-        half = min(half, topLimit, bottomLimit, bulgeHeight / 2)
-        half = max(half, 28)
-
+        // Stała wysokość fali dla DRIVE / RECORDER / SETTINGS — bez skracania przy krawędziach.
+        let half = bulgeHeight / 2
         let bulgeTop = bulgeCenterY - half
         let bulgeBottom = bulgeCenterY + half
 
@@ -161,7 +150,7 @@ private struct SidebarPath: Shape {
         path.move(to: CGPoint(x: 0, y: 0))
         path.addLine(to: CGPoint(x: w - baseR, y: 0))
         path.addQuadCurve(to: CGPoint(x: w, y: baseR), control: CGPoint(x: w, y: 0))
-        path.addLine(to: CGPoint(x: w, y: bulgeTop))
+        path.addLine(to: CGPoint(x: w, y: max(baseR, bulgeTop)))
 
         // Górna połowa fali → czubek
         path.addCurve(

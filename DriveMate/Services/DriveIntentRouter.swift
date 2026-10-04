@@ -9,6 +9,14 @@ enum NavigateStartOrigin: Equatable {
     case place(String)
 }
 
+enum MusicPlaybackCommand: Equatable {
+    case pause
+    case resume
+    case toggle
+    case next
+    case previous
+}
+
 enum DriveIntent: Equatable {
     /// Nawigacja. `start == nil` → zapytaj skąd; inaczej od razu trasa.
     case navigate(destination: String, start: NavigateStartOrigin?)
@@ -20,6 +28,7 @@ enum DriveIntent: Equatable {
     case cancelRoute
     /// Przywróć trasę przerwaną przez zjazd (restauracja / stacja / nowa nawigacja).
     case restoreInterruptedRoute
+    case music(MusicPlaybackCommand)
     case speedLimit
     case fuelCost
     /// Najbliższa stacja; `preferCheapest` = szukaj pod kątem ceny (bez live cen MapKit — ranking dystansu + informacja).
@@ -45,6 +54,10 @@ enum DriveIntentParser {
 
         // Anuluj nasłuch / trasę / przywróć przerwaną (przed chrome — „przywróć”)
         if isCancelListening(lower) { return .cancelListening }
+        // Muzyka PRZED przywracaniem trasy — „poprzedni utwór” ≠ restore
+        if let music = extractMusicCommand(from: lower) {
+            return .music(music)
+        }
         if isRestoreInterruptedRoute(lower) { return .restoreInterruptedRoute }
         if isCancelRoute(lower) { return .cancelRoute }
 
@@ -166,24 +179,92 @@ enum DriveIntentParser {
     }
 
     private static func isRestoreInterruptedRoute(_ lower: String) -> Bool {
+        // Wymagaj kontekstu trasy — samotne „poprzedni” / „wznów” to nie restore.
         let hasRouteWord = lower.contains("tras") || lower.contains("nawigacj") || lower.contains("route")
+            || lower.contains("przerwan") || lower.contains("tam gdzie jecha")
+        guard hasRouteWord else { return false }
+
         let restoreKeys = [
-            "przywróć", "przywroc", "przywróć mi", "przywroc mi",
+            "przywróć", "przywroc",
             "wróć do", "wroc do", "wróć na", "wroc na",
-            "wznów", "wznow", "wznów tras", "wznow tras",
+            "wznów", "wznow",
             "wcześniejsz", "wczesniejsz", "poprzedni", "przerwan",
             "restore route", "previous route", "resume route"
         ]
         guard restoreKeys.contains(where: { lower.contains($0) }) else { return false }
-        // „przywróć prędkościomierz” ≠ trasa
+        // „przywróć prędkościomierz” / muzyka ≠ trasa
         if lower.contains("kafelek") || lower.contains("prędkościomierz") || lower.contains("predkosciomierz")
-            || lower.contains("zegar") || lower.contains("panel") {
+            || lower.contains("zegar") || lower.contains("panel")
+            || lower.contains("utwór") || lower.contains("utwor") || lower.contains("piosenk")
+            || lower.contains("muzyk") || lower.contains("track") || lower.contains("odtwarzacz") {
             return false
         }
-        return hasRouteWord
-            || lower.contains("wcześniejsz") || lower.contains("wczesniejsz")
-            || lower.contains("poprzedni") || lower.contains("przerwan")
-            || lower.contains("tam gdzie jechał") || lower.contains("tam gdzie jechal")
+        return true
+    }
+
+    private static func extractMusicCommand(from lower: String) -> MusicPlaybackCommand? {
+        let musicContext = lower.contains("muzyk") || lower.contains("utwór") || lower.contains("utwor")
+            || lower.contains("piosenk") || lower.contains("track") || lower.contains("playlist")
+            || lower.contains("odtwarzacz") || lower.contains("song") || lower.contains("audio")
+
+        let navConflict = lower.contains("zjazd") || lower.contains("skrzyż") || lower.contains("skrzyz")
+            || lower.contains("ulic") || lower.contains("tras") || lower.contains("nawig")
+            || lower.contains("kilometr") || lower.contains(" metr")
+
+        // Następny / poprzedni
+        let wantsPrevious = lower.contains("poprzedni") || lower.contains("wcześniejsz") || lower.contains("wczesniejsz")
+            || lower.contains("cofnij") || lower.contains("previous") || lower.contains("last track")
+            || lower.contains("cofnij utwor") || lower.contains("cofnij utwór")
+        let wantsNext = lower.contains("następn") || lower.contains("kolejn") || lower.contains("skip")
+            || lower.contains("next") || lower == "dalej" || lower.hasPrefix("dalej ")
+            || lower.contains("przesuń") || lower.contains("przesun")
+
+        if wantsPrevious {
+            if musicContext { return .previous }
+            // Krótkie komendy do panelu odtwarzacza (bez konfliktu z nawigacją)
+            if !navConflict, lower == "poprzedni" || lower.hasPrefix("poprzedni ")
+                || lower == "cofnij" || lower.hasPrefix("cofnij ") {
+                return .previous
+            }
+        }
+        if wantsNext {
+            if musicContext || lower.contains("skip") { return .next }
+            if !navConflict, lower == "następny" || lower == "nastepny" || lower == "kolejny"
+                || lower.hasPrefix("następn") || lower.hasPrefix("nastepn") || lower.hasPrefix("kolejn") {
+                return .next
+            }
+        }
+
+        if lower.contains("odpauzuj") || lower.contains("od pauz")
+            || lower.contains("wznów muzyk") || lower.contains("wznow muzyk")
+            || lower.contains("wznów piosen") || lower.contains("wznow piosen")
+            || lower.contains("puść muzyk") || lower.contains("pusc muzyk")
+            || lower.contains("puść piosen") || lower.contains("pusc piosen")
+            || lower.contains("włącz muzyk") || lower.contains("wlacz muzyk")
+            || lower.contains("włącz odtwarz") || lower.contains("wlacz odtwarz")
+            || lower.contains("graj muzyk") || lower.contains("play music")
+            || lower.contains("odtwórz") || lower.contains("odtworz")
+            || lower == "play" || lower == "graj" || lower == "puść" || lower == "pusc"
+            || (musicContext && (lower.contains("wznów") || lower.contains("wznow") || lower.contains("graj") || lower.contains("play") || lower.contains("puść") || lower.contains("pusc") || lower.contains("włącz") || lower.contains("wlacz"))) {
+            return .resume
+        }
+
+        if lower.contains("pauza") || lower.contains("pause")
+            || lower.contains("zatrzymaj muzyk") || lower.contains("zatrzymaj piosen")
+            || lower.contains("zatrzymaj odtwarz") || lower.contains("wstrzymaj muzyk")
+            || lower.contains("wycisz muzyk") || lower.contains("stop music")
+            || lower == "stop" || lower == "pause"
+            || (musicContext && (lower.contains("zatrzymaj") || lower.contains("zatrzym") || lower.contains("stop") || lower.contains("wstrzymaj"))) {
+            return .pause
+        }
+
+        if lower == "pauza" || lower == "pause" { return .pause }
+        if lower == "odpauzuj" || lower == "play" { return .resume }
+        if (lower.contains("toggle") || lower.contains("przełącz") || lower.contains("przelacz")) && musicContext {
+            return .toggle
+        }
+
+        return nil
     }
 
     private static func isSpeedLimit(_ lower: String) -> Bool {
@@ -694,6 +775,9 @@ enum DriveIntentExecutor {
         case .restoreInterruptedRoute:
             return await executeRestoreInterruptedRoute()
 
+        case .music(let command):
+            return executeMusic(command)
+
         case .speedLimit:
             return await executeSpeedLimit()
 
@@ -865,30 +949,69 @@ enum DriveIntentExecutor {
         )
     }
 
+    private static func executeMusic(_ command: MusicPlaybackCommand) -> String {
+        let player = MusicPlayerService.shared
+        // Upewnij się, że biblioteka jest świeża (import w Settings).
+        player.bind(library: MusicLibraryService.shared)
+        MusicLibraryService.shared.load()
+
+        guard player.hasTracks else {
+            NotificationCenter.default.post(name: .driveMateDidControlMusic, object: nil)
+            return "Nie mam utworów — dodaj muzykę w ustawieniach, wtedy steruję odtwarzaczem."
+        }
+
+        let reply: String
+        switch command {
+        case .pause:
+            if !player.isPlaying {
+                reply = "Muzyka już jest wstrzymana."
+            } else {
+                player.pause()
+                reply = "Pauza."
+            }
+
+        case .resume:
+            if player.play(), let name = player.currentTrack?.name {
+                reply = "Wznawiam \(name)."
+            } else {
+                reply = "Nie udało się odtworzyć utworu."
+            }
+
+        case .toggle:
+            player.togglePlayPause()
+            reply = player.isPlaying
+                ? (player.currentTrack.map { "Wznawiam \($0.name)." } ?? "Wznawiam muzykę.")
+                : "Pauza."
+
+        case .next:
+            if player.next(andPlay: true), let name = player.currentTrack?.name {
+                reply = "Następny utwór: \(name)."
+            } else {
+                reply = "Nie udało się przełączyć utworu."
+            }
+
+        case .previous:
+            if player.previous(andPlay: true), let name = player.currentTrack?.name {
+                reply = "Poprzedni utwór: \(name)."
+            } else {
+                reply = "Nie udało się przełączyć utworu."
+            }
+        }
+
+        NotificationCenter.default.post(name: .driveMateDidControlMusic, object: nil)
+        return reply
+    }
+
     private static func executeRestoreInterruptedRoute() async -> String {
         guard let saved = InterruptedRouteStore.shared.route else {
             return "Nie mam zapisanej wcześniejszej trasy. Pojawi się, gdy przerwiesz nawigację np. zjazdem do restauracji albo stacji."
-        }
-
-        // Anuluj bieżącą bez nadpisywania snapshotu wcześniejszej
-        if let mapState = MapKitNavigationService.shared.mapState, mapState.isNavigating {
-            DriveMateMemoryStore.shared.notifyTripEnded(
-                destinationTitle: mapState.destinationTitle,
-                destinationCoordinate: mapState.destinationCoordinate,
-                subtitle: mapState.statusBanner ?? ""
-            )
-            _ = mapState.endTripAndSummarize()
-            NotificationCenter.default.post(
-                name: .driveMateDidCancelRoute,
-                object: nil,
-                userInfo: ["title": mapState.destinationTitle as Any]
-            )
         }
 
         RestaurantOfferService.shared.dismiss()
         GasStationOfferService.shared.dismiss()
         MapComplianceStore.shared.clear()
 
+        // Bez podsumowania / anulowania — tylko zmiana celu na wcześniejszy, start = aktualna lokalizacja.
         do {
             _ = try await MapKitNavigationService.shared.planBestRoute(
                 toLatitude: saved.latitude,
@@ -903,11 +1026,12 @@ enum DriveIntentExecutor {
                     "subtitle": saved.subtitle,
                     "lat": saved.latitude,
                     "lon": saved.longitude,
-                    "saveRecent": false
+                    "saveRecent": false,
+                    "restoredRoute": true
                 ]
             )
             InterruptedRouteStore.shared.clear()
-            return "Przywracam wcześniejszą trasę do \(saved.title)."
+            return "Przywracam wcześniejszą trasę do \(saved.title) — startuję z Twojej lokalizacji."
         } catch NavigationError.disclaimerRequired {
             NotificationCenter.default.post(name: .driveMateNeedsNavEULA, object: nil)
             return "Zaakceptuj warunki nawigacji, potem powiedz ponownie „przywróć wcześniejszą trasę”."
@@ -1031,6 +1155,8 @@ enum DriveIntentExecutor {
     }
 
     private static func executeNavigate(destination: String, start: NavigateStartOrigin?) async -> String {
+        // Konfiguracja trasy — bez mini-mapki podglądu.
+        MapComplianceStore.shared.clear()
         do {
             guard let first = try await MapKitNavigationService.shared.findFirstPlace(
                 query: destination,

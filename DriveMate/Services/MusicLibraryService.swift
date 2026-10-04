@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MusicLibraryService: ObservableObject {
+    static let shared = MusicLibraryService()
+
     static let musicDirectory: URL = {
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Music", isDirectory: true)
@@ -18,7 +20,7 @@ final class MusicLibraryService: ObservableObject {
     @Published var isImporting = false
     @Published var importMessage: String?
 
-    init() {
+    private init() {
         load()
     }
 

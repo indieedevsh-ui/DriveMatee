@@ -527,9 +527,9 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         state = .listening
         fadeSiriGlow(to: 1, duration: 0.22)
 
-        if settings?.autoMuteEnabled == true {
-            music?.duckForAssistant(true, autoMuteEnabled: true)
-        }
+        // Podczas słuchania ścisz muzykę (nadal gra); sesję audio ustawi ASR.
+        let player = music ?? MusicPlayerService.shared
+        player.duckForAssistant(true, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
 
         // Brak mowy w ogóle → zamknij.
         resetListeningIdleTimer()
@@ -700,9 +700,11 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         let base = AVSpeechUtteranceDefaultSpeechRate
         utterance.rate = faster ? base * 1.08 : base * 0.98
 
-        if settings?.autoMuteEnabled == true {
-            music?.duckForAssistant(true, autoMuteEnabled: true)
-        }
+        // Muzyka ma grać dalej cicho pod TTS (nie zatrzymuj).
+        restorePlaybackSession()
+        let player = music ?? MusicPlayerService.shared
+        let duckEnabled = settings?.autoMuteEnabled ?? true
+        player.duckForAssistant(true, autoMuteEnabled: duckEnabled)
 
         state = .speaking
         synthesizer.speak(utterance)
@@ -789,7 +791,8 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 extension DriveMateAssistant: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+            let player = music ?? MusicPlayerService.shared
+            player.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
             DriveInfoCardStore.shared.scheduleDismissAfterSpeech(delaySeconds: 1.5)
             if keepListeningAfterSpeech {
                 keepListeningAfterSpeech = false
@@ -805,7 +808,8 @@ extension DriveMateAssistant: AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
-            music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+            let player = music ?? MusicPlayerService.shared
+            player.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
             keepListeningAfterSpeech = false
             if DriveInfoCardStore.shared.isActive {
                 DriveInfoCardStore.shared.dismiss()

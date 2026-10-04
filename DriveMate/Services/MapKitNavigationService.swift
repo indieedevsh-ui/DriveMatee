@@ -128,10 +128,14 @@ final class NavigationMapState: ObservableObject {
     @Published var destinationFlagVisible = false
     /// Inkrementowane, by wywołać podskok flagi.
     @Published var destinationFlagBounceToken: Int = 0
+    /// Inkrementowane gdy trzeba wystartować rysowanie linii (mapa musi być gotowa).
+    @Published private(set) var routeRevealRequestID: Int = 0
 
     private var announcedManeuverIDs: Set<UUID> = []
     private var passedManeuverIDs: Set<UUID> = []
     private var routeRevealTask: Task<Void, Never>?
+    /// Czekamy na MapDriveView — animacja nie może lecieć „w próżnię”.
+    private var routeRevealAwaitingMap = false
 
     // Trip stats
     private var tripStartedAt: Date?
@@ -143,6 +147,7 @@ final class NavigationMapState: ObservableObject {
     func clearNavigation() {
         routeRevealTask?.cancel()
         routeRevealTask = nil
+        routeRevealAwaitingMap = false
         destinationCoordinate = nil
         destinationTitle = nil
         route = nil
@@ -253,7 +258,9 @@ final class NavigationMapState: ObservableObject {
                 routeRevealCameraCoordinate = nil
             }
             cameraFocus = .follow
-            startRouteRevealAnimation()
+            // Start animacji dopiero gdy mapa nawigacji jest na ekranie.
+            routeRevealAwaitingMap = true
+            routeRevealRequestID &+= 1
         } else {
             isFollowingUser = true
             isAnimatingRouteReveal = false
@@ -261,18 +268,36 @@ final class NavigationMapState: ObservableObject {
             destinationFlagVisible = true
             routeRevealCameraCoordinate = nil
             cameraFocus = .destination
+            routeRevealAwaitingMap = false
         }
+    }
+
+    /// Wywołaj z MapDriveView gdy MKMapView jest gotowy (onAppear / nowa trasa).
+    func startRouteRevealWhenMapReady() {
+        guard routeRevealAwaitingMap, isNavigating, route?.polyline != nil else { return }
+        routeRevealAwaitingMap = false
+        startRouteRevealAnimation()
     }
 
     private func startRouteRevealAnimation() {
         routeRevealTask?.cancel()
+        isAnimatingRouteReveal = true
+        destinationFlagVisible = false
+        routeDrawProgress = 0
+        if let poly = route?.polyline,
+           let start = RouteGeometry.coordinate(along: poly, progress: 0) {
+            routeRevealCameraCoordinate = start
+        }
+
         routeRevealTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 220_000_000)
+            // Daj MKMapView czas na utworzenie LimeRouteRenderer.
+            try? await Task.sleep(nanoseconds: 280_000_000)
             guard !Task.isCancelled, isNavigating, isAnimatingRouteReveal else { return }
             guard let polyline = route?.polyline else { return }
 
-            let duration: Double = 2.55 * 1.5
-            let steps = 64
+            let duration: Double = 3.2
+            let steps = 72
+            let stepNs = UInt64((duration / Double(steps)) * 1_000_000_000)
             for i in 1...steps {
                 guard !Task.isCancelled, isNavigating, isAnimatingRouteReveal else { return }
                 let t = Double(i) / Double(steps)
@@ -283,8 +308,9 @@ final class NavigationMapState: ObservableObject {
                 if let tip = RouteGeometry.coordinate(along: polyline, progress: progress) {
                     routeRevealCameraCoordinate = tip
                 }
-                try? await Task.sleep(nanoseconds: UInt64((duration / Double(steps)) * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: stepNs)
             }
+            guard !Task.isCancelled, isNavigating else { return }
             routeDrawProgress = 1
             if let end = RouteGeometry.coordinate(along: polyline, progress: 1)
                 ?? destinationCoordinate {
@@ -294,7 +320,7 @@ final class NavigationMapState: ObservableObject {
             // Flaga na celu + lekki podskok
             destinationFlagVisible = true
             destinationFlagBounceToken &+= 1
-            try? await Task.sleep(nanoseconds: 950_000_000)
+            try? await Task.sleep(nanoseconds: 850_000_000)
             guard !Task.isCancelled, isNavigating else { return }
 
             // Wróć do wycentrowanej lokalizacji usera
@@ -558,14 +584,8 @@ final class MapKitNavigationService {
             )
         }
         let response = try await MKLocalSearch(request: request).start()
-        let place = response.mapItems.lazy.compactMap { Self.mapItemToPlace($0, fallbackName: query) }.first
-        if let place {
-            MapComplianceStore.shared.showPlace(
-                name: place.name,
-                coordinate: CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)
-            )
-        }
-        return place
+        // Bez mini-mapki przy szukaniu celu nawigacji — tylko wynik tekstowy.
+        return response.mapItems.lazy.compactMap { Self.mapItemToPlace($0, fallbackName: query) }.first
     }
 
     private static func mapItemToPlace(_ item: MKMapItem, fallbackName: String) -> PlaceResult? {
@@ -955,4 +975,6 @@ extension Notification.Name {
     static let driveMateDidSelectDestination = Notification.Name("driveMateDidSelectDestination")
     static let driveMateNeedsNavEULA = Notification.Name("driveMateNeedsNavEULA")
     static let driveMateDidCancelRoute = Notification.Name("driveMateDidCancelRoute")
+    /// Drive Mate / odtwarzacz zmienił stan — pokaż panel muzyki.
+    static let driveMateDidControlMusic = Notification.Name("driveMateDidControlMusic")
 }

@@ -161,7 +161,7 @@ enum VoiceCommandProcessor {
         }
 
         return Result(
-            reply: "Mogę pomóc w nawigacji, korkach, info o ulicy albo restauracji. Czego potrzebujesz?",
+            reply: "Mogę pomóc w nawigacji, korkach, info o ulicy, restauracji albo muzyce. Czego potrzebujesz?",
             source: .localRouter,
             didApplySideEffect: false
         )
@@ -242,7 +242,7 @@ enum VoiceCommandProcessor {
 
     private static func intentNeedsSideEffect(_ intent: DriveIntent) -> Bool {
         switch intent {
-        case .cancelRoute, .restoreInterruptedRoute, .nearestFuel, .navigateToPastVisit: return true
+        case .cancelRoute, .restoreInterruptedRoute, .music, .nearestFuel, .navigateToPastVisit: return true
         default: return false
         }
     }
@@ -250,7 +250,7 @@ enum VoiceCommandProcessor {
     private static func isSideEffectIntent(_ intent: DriveIntent) -> Bool {
         switch intent {
         case .navigate, .traffic, .streetInfo, .streetHistory, .findFood,
-             .cancelRoute, .restoreInterruptedRoute, .speedLimit, .fuelCost, .nearestFuel, .setCarModel,
+             .cancelRoute, .restoreInterruptedRoute, .music, .speedLimit, .fuelCost, .nearestFuel, .setCarModel,
              .navigateToPastVisit, .setChromeTile:
             return true
         case .cancelListening, .answer, .unsupported, .unknown:

@@ -172,11 +172,13 @@ private struct ComplianceMapView: UIViewRepresentable {
         map.showsCompass = false
         map.pointOfInterestFilter = .includingAll
         map.overrideUserInterfaceStyle = .dark
+        AppleMapsView.hideNativeAppleMapsChrome(in: map)
         return map
     }
 
     func updateUIView(_ map: MKMapView, context: Context) {
         map.showsTraffic = surface.showsTraffic
+        AppleMapsView.hideNativeAppleMapsChrome(in: map)
         map.removeAnnotations(map.annotations)
         map.removeOverlays(map.overlays)
 

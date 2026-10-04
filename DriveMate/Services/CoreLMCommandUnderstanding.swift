@@ -46,6 +46,14 @@ enum CoreLM {
             case cancelRoute
             /// Przywróć wcześniejszą / przerwaną trasę
             case restoreInterruptedRoute
+            /// Muzyka w aplikacji: pauza
+            case musicPause
+            /// Muzyka: wznów / odpauzuj
+            case musicResume
+            /// Muzyka: następny utwór
+            case musicNext
+            /// Muzyka: poprzedni utwór
+            case musicPrevious
             /// Limit / max prędkość na odcinku
             case speedLimit
             /// Szacunek kosztu paliwa na trasie
@@ -100,7 +108,11 @@ enum CoreLM {
                 - findFood — głód, restauracja, jedzenie w pobliżu
                 - cancelListening — „anuluj nasłuchiwanie”, „przestań słuchać”, wyłącz asystenta
                 - cancelRoute — anuluj / zakończ aktywną trasę nawigacji
-                - restoreInterruptedRoute — „przywróć wcześniejszą trasę” / przerwaną nawigację
+                - restoreInterruptedRoute — „przywróć wcześniejszą trasę” / przerwaną nawigację (NIE podsumowanie — tylko zmiana celu)
+                - musicPause — pauza / zatrzymaj muzykę / stop (odtwarzacz w aplikacji) — NIGDY unsupported
+                - musicResume — wznów / odpauzuj / włącz / puść muzykę — NIGDY unsupported
+                - musicNext — następny / kolejny utwór / skip — NIGDY unsupported
+                - musicPrevious — poprzedni utwór / cofnij utwór — NIGDY unsupported (to NIE jest restoreInterruptedRoute)
                 - speedLimit — jaka max prędkość / limit na odcinku
                 - fuelCost — ile paliwa / koszt przejazdu na bieżącej trasie
                 - nearestFuel — najbliższa stacja paliw
@@ -127,6 +139,10 @@ enum CoreLM {
                 - „anuluj nasłuchiwanie” → cancelListening
                 - „anuluj trasę” → cancelRoute
                 - „przywróć mi wcześniejszą trasę” / „wznów przerwaną trasę” → restoreInterruptedRoute
+                - „pauza” / „zatrzymaj muzykę” → musicPause
+                - „odpauzuj” / „wznów muzykę” → musicResume
+                - „następny utwór” / „kolejna piosenka” → musicNext
+                - „poprzedni utwór” / „cofnij utwór” → musicPrevious
                 - „jaka jest maksymalna prędkość” → speedLimit
                 - „opowiedz historię tej ulicy” → streetHistory
                 - „co to za ulica” / „informacje o ulicy” / „ciekawostki o ulicy” → streetInfo lub streetHistory
@@ -156,7 +172,7 @@ enum CoreLM {
                 Jesteś Drive Mate — asystent w aucie. Odpowiadasz po polsku, naturalnie, 1–3 zdania.
 
                 Umiesz pomóc w: nawigacji Apple Maps, korkach, info o ulicy/miejscu, restauracjach w pobliżu,
-                przywracaniu wcześniejszej (przerwanej) trasy.
+                przywracaniu wcześniejszej (przerwanej) trasy, sterowaniu muzyką w aplikacji (pauza, play, next, previous).
                 Jeśli prośba wykracza poza to — powiedz wprost: „Tego jeszcze nie umiem w Drive Mate.”
                 NIGDY nie zmyślaj tras, ETA, adresów, korków ani wyników mapy.
                 Nie losuj miejsc ani wyników. Jeśli nie wiesz — przyznaj się.
@@ -236,6 +252,18 @@ enum CoreLM {
 
         case .restoreInterruptedRoute:
             return .restoreInterruptedRoute
+
+        case .musicPause:
+            return .music(.pause)
+
+        case .musicResume:
+            return .music(.resume)
+
+        case .musicNext:
+            return .music(.next)
+
+        case .musicPrevious:
+            return .music(.previous)
 
         case .speedLimit:
             return .speedLimit
