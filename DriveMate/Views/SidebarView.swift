@@ -109,16 +109,18 @@ private struct SidebarGlassShape: View {
                     )
                 )
 
-                shape.stroke(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.04), Color.white.opacity(0.32)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 1
-                )
+                // Obrys tylko przy wewnętrznej (prawej) krawędzi — bez kreski poza lewym marginesem.
+                shape
+                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                    .mask(
+                        HStack(spacing: 0) {
+                            Color.clear.frame(width: max(0, size.width - bulgeWidth - 3))
+                            Color.white
+                        }
+                    )
             }
             .frame(width: size.width, height: size.height)
+            .clipShape(shape)
         }
         .allowsHitTesting(false)
     }
