@@ -64,10 +64,10 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     /// Trening Hey Drive przejmuje mikrofon.
     private var wakePausedForTraining = false
 
-    /// 3 s bez żadnej mowy po aktywacji → koniec.
-    private let listeningIdleTimeoutNs: UInt64 = 3_000_000_000
+    /// 5 s bez żadnej mowy po aktywacji → koniec (więcej czasu przy szumie kabiny).
+    private let listeningIdleTimeoutNs: UInt64 = 5_000_000_000
     /// Max długość jednej sesji dyktafonu (zabezpieczenie przed nieskończonym nasłuchem).
-    private let maxCaptureNs: UInt64 = 7_500_000_000
+    private let maxCaptureNs: UInt64 = 10_000_000_000
     private var maxCaptureTask: Task<Void, Never>?
 
     private weak var settings: AppSettings?

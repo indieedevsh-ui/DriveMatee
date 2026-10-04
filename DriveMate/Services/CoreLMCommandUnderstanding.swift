@@ -105,7 +105,7 @@ enum CoreLM {
                 - traffic — korki, ruch, utrudnienia
                 - streetInfo — co to za ulica / info o miejscu (PRG, TERYT, mapa) — NIGDY unsupported
                 - streetHistory — historia / ciekawostka o ulicy (Wikipedia + rejestry) — NIGDY unsupported
-                - findFood — głód, restauracja, jedzenie w pobliżu
+                - findFood — głód, restauracja, jedzenie, knajpa, lunch, „najbliższa restauracja”, „gdzie zjeść”
                 - cancelListening — „anuluj nasłuchiwanie”, „przestań słuchać”, wyłącz asystenta
                 - cancelRoute — anuluj / zakończ aktywną trasę nawigacji
                 - restoreInterruptedRoute — „przywróć wcześniejszą trasę” / przerwaną nawigację (NIE podsumowanie — tylko zmiana celu)
@@ -114,8 +114,8 @@ enum CoreLM {
                 - musicNext — następny / kolejny utwór / skip — NIGDY unsupported
                 - musicPrevious — poprzedni utwór / cofnij utwór — NIGDY unsupported (to NIE jest restoreInterruptedRoute)
                 - speedLimit — jaka max prędkość / limit na odcinku
-                - fuelCost — ile paliwa / koszt przejazdu na bieżącej trasie
-                - nearestFuel — najbliższa stacja paliw
+                - fuelCost — ile paliwa / spalanie / koszt przejazdu / „ile spalę” / „ile zapłacę za paliwo” na bieżącej trasie
+                - nearestFuel — najbliższa stacja paliw / tankowanie
                 - cheapestFuel — stacja pod kątem ceny (MapKit nie ma live cen)
                 - setCarModel — „moje auto to Toyota Corolla” / zapis modelu do spalania; destinationOrQuery = model
                 - pastVisit — „tam gdzie pojechałem 2 dni temu”; destinationOrQuery = „2” lub „wczoraj”
@@ -135,7 +135,7 @@ enum CoreLM {
                 - „Zaczynam z swojej lokalizacji i chcę dotrzeć do Rynku Dębnickiego”
                   → navigate, destinationOrQuery=\"Rynek Dębnicki\", startMode=myLocation
                 - „Rynek Dębnicki” → navigate, startMode=askUser
-                - „jestem głodny” → findFood
+                - „jestem głodny” / „najbliższa restauracja” / „gdzie zjeść” / „mam ochotę na obiad” → findFood
                 - „anuluj nasłuchiwanie” → cancelListening
                 - „anuluj trasę” → cancelRoute
                 - „przywróć mi wcześniejszą trasę” / „wznów przerwaną trasę” → restoreInterruptedRoute
@@ -146,7 +146,7 @@ enum CoreLM {
                 - „jaka jest maksymalna prędkość” → speedLimit
                 - „opowiedz historię tej ulicy” → streetHistory
                 - „co to za ulica” / „informacje o ulicy” / „ciekawostki o ulicy” → streetInfo lub streetHistory
-                - „ile będzie kosztować paliwo” → fuelCost
+                - „ile będzie kosztować paliwo” / „ile spalę” / „zużycie paliwa” / „koszt trasy” → fuelCost
                 - „gdzie jest najbliższa stacja paliw” → nearestFuel
                 - „najtańsza stacja paliw” → cheapestFuel
                 - „moje auto to Toyota Corolla” → setCarModel, destinationOrQuery=\"Toyota Corolla\"
@@ -172,6 +172,7 @@ enum CoreLM {
                 Jesteś Drive Mate — asystent w aucie. Odpowiadasz po polsku, naturalnie, 1–3 zdania.
 
                 Umiesz pomóc w: nawigacji Apple Maps, korkach, info o ulicy/miejscu, restauracjach w pobliżu,
+                koszcie/zużyciu paliwa na trasie, stacjach paliw,
                 przywracaniu wcześniejszej (przerwanej) trasy, sterowaniu muzyką w aplikacji (pauza, play, next, previous).
                 Jeśli prośba wykracza poza to — powiedz wprost: „Tego jeszcze nie umiem w Drive Mate.”
                 NIGDY nie zmyślaj tras, ETA, adresów, korków ani wyników mapy.

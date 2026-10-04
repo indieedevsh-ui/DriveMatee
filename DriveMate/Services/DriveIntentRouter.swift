@@ -47,10 +47,16 @@ enum DriveIntent: Equatable {
 }
 
 enum DriveIntentParser {
+    /// Dopasowanie bez polskich znaków — ASR często gubi diakrytyki.
+    private static func folded(_ text: String) -> String {
+        text.lowercased()
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+    }
+
     static func parse(_ text: String) -> DriveIntent {
         let cleaned = normalize(text)
         guard !cleaned.isEmpty else { return .unknown(raw: text) }
-        let lower = cleaned.lowercased()
+        let lower = folded(cleaned)
 
         // Anuluj nasłuch / trasę / przywróć przerwaną (przed chrome — „przywróć”)
         if isCancelListening(lower) { return .cancelListening }
@@ -149,31 +155,37 @@ enum DriveIntentParser {
 
     private static func isFoodRequest(_ lower: String) -> Bool {
         let keys = [
-            "głodn", "glodn", "jem", "zjem", "jeść", "jesc",
-            "restaurac", "jedzenie", "coś do jedzenia", "cos do jedzenia",
-            "fast food", "obiad", "kolacj", "śniadan", "sniadan",
-            "pizza", "burger", "kebab", "kawa", "kawiarni",
-            "gdzie zjeść", "gdzie zjesc", "najbliższa restaurac", "najblizsza restaurac",
-            "hungry", "restaurant", "food", "eat"
+            "glodn", "glodny", "glodna", "glodni", "zaglodn",
+            "jem", "zjem", "zjesc", "jesc", "posilek", "posilku",
+            "restaurac", "restauracja", "restauracje", "restauracji", "restauracie",
+            "jedzenie", "cos do jedzenia", "cos zjesc", "chce zjesc", "chcialbym zjesc",
+            "ochote na", "ochota na", "na zab",
+            "fast food", "obiad", "obiadu", "kolacj", "sniadan", "lunch", "brunch",
+            "pizza", "burger", "kebab", "sushi", "ramen", "mcdonald", "mc donald",
+            "kawa", "kawiarni", "kawiarnie", "bar mlecz", "stolowk",
+            "gdzie zjesc", "gdzie cos zjesc", "najblizsza restaurac", "najblizszy lokal",
+            "najblizszy bar", "najblizsza knajp", "knajp", "lokal gastronom",
+            "znajdz restaurac", "szukam restaurac", "pokaz restaurac",
+            "hungry", "restaurant", "food", "eat", "nearest restaurant", "grab food"
         ]
         return keys.contains(where: { lower.contains($0) })
     }
 
     private static func isCancelListening(_ lower: String) -> Bool {
         let keys = [
-            "anuluj nasłuch", "anuluj nasluch", "wyłącz nasłuch", "wylacz nasluch",
-            "przestań słuchać", "przestan sluchac", "stop listening",
-            "nie słuchaj", "nie sluchaj", "zamknij asystenta"
+            "anuluj nasluch", "wylacz nasluch",
+            "przestan sluchac", "stop listening",
+            "nie sluchaj", "zamknij asystenta"
         ]
         return keys.contains { lower.contains($0) }
     }
 
     private static func isCancelRoute(_ lower: String) -> Bool {
         let keys = [
-            "anuluj trasę", "anuluj trase", "anuluj nawigacj", "zakończ trasę", "zakoncz trase",
-            "zakończ nawigacj", "zakoncz nawigacj", "wyłącz nawigacj", "wylacz nawigacj",
+            "anuluj trase", "anuluj nawigacj", "zakoncz trase",
+            "zakoncz nawigacj", "wylacz nawigacj",
             "stop navigation", "cancel route", "cancel navigation",
-            "przestań nawigować", "przestan nawigowac", "nie chcę jechać", "nie chce jechac"
+            "przestan nawigowac", "nie chce jechac"
         ]
         return keys.contains { lower.contains($0) }
     }
@@ -269,35 +281,53 @@ enum DriveIntentParser {
 
     private static func isSpeedLimit(_ lower: String) -> Bool {
         let keys = [
-            "maksymalna prędkość", "maksymalna predkosc", "limit prędkości", "limit predkosci",
-            "ile mogę jechać", "ile moge jechac", "jaka prędkość", "jaka predkosc",
-            "prędkość maksymalna", "predkosc maksymalna", "dozwolona prędkość", "dozwolona predkosc",
-            "speed limit", "ile max", "max prędkość", "max predkosc"
+            "maksymalna predkosc", "limit predkosci",
+            "ile moge jechac", "jaka predkosc",
+            "predkosc maksymalna", "dozwolona predkosc",
+            "speed limit", "ile max", "max predkosc"
         ]
         return keys.contains { lower.contains($0) }
     }
 
     private static func isFuelCost(_ lower: String) -> Bool {
+        // Nie mylić z „stacja paliw” / tankowaniem — to nearestFuel.
+        if isNearestFuel(lower), !lower.contains("koszt"), !lower.contains("spal"),
+           !lower.contains("zuzyc"), !lower.contains("litr"), !lower.contains("ile zl"),
+           !lower.contains("ile bedzie") {
+            return false
+        }
         let keys = [
-            "ile paliwa", "koszt paliwa", "koszt przejazdu", "ile będzie kosztować",
-            "ile bedzie kosztowac", "zużycie paliwa", "zuzycie paliwa",
-            "ile litrów", "ile litrow", "fuel cost", "spalanie na trasie"
+            "ile paliwa", "ile paliva", "ile spal", "ile spale", "ile spalimy", "ile zuzyje",
+            "koszt paliwa", "koszt paliva", "koszt przejazdu", "koszt trasy", "cena przejazdu",
+            "ile bedzie kosztowac", "ile bedzie koszt", "ile to bedzie kosztowac",
+            "ile bedzie kosztowalo", "ile zaplace", "ile zaplace za paliwo", "ile zl paliwo",
+            "zuzycie paliwa", "zuzycie paliva", "zuzycie na trasie", "zusycie paliwa",
+            "ile litrow", "ile litrow zuzyje", "spalanie", "spalanie na trasie", "spalanie paliwa",
+            "fuel cost", "fuel consumption", "how much fuel", "gas cost"
         ]
-        return keys.contains { lower.contains($0) }
+        if keys.contains(where: { lower.contains($0) }) { return true }
+        // Luźniejsze: „paliwo” + pytanie o ilość/koszt
+        let asksQuantity = lower.contains("ile") || lower.contains("koszt") || lower.contains("cena")
+            || lower.contains("spal") || lower.contains("zuzyc") || lower.contains("litr")
+        let aboutFuel = lower.contains("paliw") || lower.contains("paliv") || lower.contains("benzyn")
+            || lower.contains("spalan") || lower.contains("fuel")
+        return asksQuantity && aboutFuel
     }
 
     private static func isNearestFuel(_ lower: String) -> Bool {
         let keys = [
-            "stacja paliw", "stację paliw", "stacje paliw", "stacji paliw",
+            "stacja paliw", "stacje paliw", "stacji paliw", "stacje benzyn",
+            "najblizsza stacja", "najblizsza stacje", "gdzie stacja", "gdzie zatankowac",
             "benzyna", "orlen", "shell", "bp ", "stacja benzyn",
-            "gas station", "petrol", "tankować", "tankowac", "zatankować", "zatankowac"
+            "gas station", "petrol", "tankowac", "zatankowac", "tankowanie",
+            "najblizszy orlen", "stacja paliwo"
         ]
         return keys.contains { lower.contains($0) }
     }
 
     private static func isCheapestFuel(_ lower: String) -> Bool {
         lower.contains("najtani") || lower.contains("najlepsz") || lower.contains("tanio")
-            || lower.contains("cena") || lower.contains("cenę") || lower.contains("cene")
+            || lower.contains("cena") || lower.contains("cene")
             || lower.contains("cheapest") || lower.contains("best price")
     }
 
@@ -308,10 +338,10 @@ enum DriveIntentParser {
 
     private static func extractCarModel(from text: String, lower: String) -> String? {
         let prefixes = [
-            "mój samochód to ", "moj samochod to ", "moje auto to ",
-            "jeżdżę ", "jezdzę ", "jezdze ",
-            "mam auto ", "mam samochód ", "mam samochod ",
-            "model auta ", "samochód ", "samochod ", "auto to ",
+            "moj samochod to ", "moje auto to ",
+            "jezdze ",
+            "mam auto ", "mam samochod ",
+            "model auta ", "samochod ", "auto to ",
             "my car is ", "i drive "
         ]
         for p in prefixes {
@@ -436,17 +466,19 @@ enum DriveIntentParser {
 
     private static func isNavigation(_ lower: String) -> Bool {
         let verbs = [
-            "jedź", "jedz", "jedziemy", "jedźmy", "jedzmy",
-            "zaprowadź", "zaprowadz", "zaprowadźcie",
-            "zabierz", "weź mnie", "wez mnie", "weźcie",
-            "prowadź", "prowadz", "pokieruj", "kieruj",
-            "nawiguj", "nawigacja",
-            "trasa", "trasę", "trase", "dojazd",
-            "znajdź", "znajdz", "wyznacz",
-            "dotrzeć", "dotrzec", "dojechać", "dojechac", "dojechać",
-            "chciałbym dotrzeć", "chcialbym dotrzec", "chcę dotrzeć", "chce dotrzec",
-            "leć", "lec", "lecimy",
-            "go to", "take me", "navigate", "drive to", "drive me"
+            "jedz", "jedziemy", "jedzmy",
+            "zaprowadz", "zabierz", "wez mnie", "wezcie",
+            "prowadz", "pokieruj", "kieruj",
+            "nawiguj", "nawigacja", "nawigacje", "nawigowaniu",
+            "trasa", "trase", "dojazd", "dojazdu",
+            "znajdz", "wyznacz",
+            "dotrzec", "dojechac",
+            "chcialbym dotrzec", "chce dotrzec", "chce dojechac",
+            "lec", "lecimy",
+            "konfiguruj trase", "ustaw trase", "ustaw nawigacje",
+            "prowadz mnie", "zaprowadź mnie", "zaprowadz mnie",
+            "go to", "take me", "navigate", "drive to", "drive me",
+            "directions to", "route to"
         ]
         if verbs.contains(where: { lower.contains($0) }) { return true }
         if lower.hasPrefix("do ") || lower.hasPrefix("na ") { return true }
@@ -466,7 +498,7 @@ enum DriveIntentParser {
         let placeHints = [
             "rynek", "ulic", "park", "plac", "kościół", "kosciol", "dworzec", "centrum",
             "galeria", "most", "osiedle", "stadion", "lotnisko", "szpital", "muzeum",
-            "wawel", "sukiennic", "młynówka", "mlynowka"
+            "wawel", "sukiennic", "mlynowka"
         ]
         if placeHints.contains(where: { lower.contains($0) }) { return true }
         // Multi-word proper-looking name (np. „Rynek Dębnicki”)
@@ -479,23 +511,24 @@ enum DriveIntentParser {
             "z swojej lokalizacji", "ze swojej lokalizacji", "z mojej lokalizacji",
             "z mojego punktu", "z mojej pozycji", "z mojej lokalizacja",
             "zaczynam z swojej lokalizacji", "zaczynam z mojej lokalizacji",
-            "startuję z mojej lokalizacji", "startuje z mojej lokalizacji",
-            "z lokalizacji", "z gps", "stąd", "stad", "from my location", "from here"
+            "startuje z mojej lokalizacji", "startuje z lokalizacji",
+            "z lokalizacji", "z gps", "stad", "from my location", "from here",
+            "z mojej pozycji gps", "tu gdzie jestem"
         ]
         let hasMyStart = myStartMarkers.contains(where: { lower.contains($0) })
 
-        // Cel po „dotrzeć do” / „dojechać do” / „do ”
+        // Cel po „dotrzeć do” / „dojechać do” / „do ” — wzorce bez diakrytyków (lower jest folded).
         let destPatterns = [
-            "chcę dotrzeć do ", "chce dotrzec do ", "chciałbym dotrzeć do ", "chcialbym dotrzec do ",
-            "chcę dojechać do ", "chce dojechac do ", "dotrzeć do ", "dotrzec do ",
-            "dojechać do ", "dojechac do ", "dotrzeć na ", "dotrzec na ",
-            "i chcę dotrzeć do ", "i chce dotrzec do ", "i dotrzeć do ",
-            "jedź do ", "jedz do ", "jedź na ", "jedz na ",
+            "chce dotrzec do ", "chcialbym dotrzec do ",
+            "chce dojechac do ", "dotrzec do ",
+            "dojechac do ", "dotrzec na ",
+            "i chce dotrzec do ", "i dotrzec do ",
+            "jedz do ", "jedz na ",
             "do ", "na "
         ]
 
         if hasMyStart {
-            if let dest = extractAfterFirstMatch(text, patterns: destPatterns), dest.count > 1 {
+            if let dest = extractAfterFirstMatchFolded(text, lower: lower, patterns: destPatterns), dest.count > 1 {
                 let cleanedDest = stripTrailingStartClause(dest)
                 if cleanedDest.count > 1 {
                     return .navigate(destination: cleanedDest, start: .myLocation)
@@ -506,7 +539,7 @@ enum DriveIntentParser {
         // „do X z mojej lokalizacji” / „do X z mojego punktu”
         for marker in [
             " z mojej lokalizacji", " z swojej lokalizacji", " ze swojej lokalizacji",
-            " z mojego punktu", " z mojej pozycji", " z lokalizacji", " stąd", " stad"
+            " z mojego punktu", " z mojej pozycji", " z lokalizacji", " stad"
         ] {
             if let range = lower.range(of: marker) {
                 let before = String(text[..<text.index(text.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))])
@@ -514,7 +547,7 @@ enum DriveIntentParser {
                 if let dest = extractDestination(before) ?? stripNavigationPrefix(before), dest.count > 1 {
                     return .navigate(destination: dest, start: .myLocation)
                 }
-                if isBarePlaceName(before, lower: before.lowercased()) {
+                if isBarePlaceName(before, lower: folded(before)) {
                     return .navigate(destination: before, start: .myLocation)
                 }
             }
@@ -549,9 +582,14 @@ enum DriveIntentParser {
     }
 
     private static func extractAfterFirstMatch(_ text: String, patterns: [String]) -> String? {
-        let lower = text.lowercased()
+        extractAfterFirstMatchFolded(text, lower: folded(text), patterns: patterns)
+    }
+
+    /// Szuka wzorca w `lower` (już folded) i wycina odpowiadający fragment z oryginalnego `text`.
+    private static func extractAfterFirstMatchFolded(_ text: String, lower: String, patterns: [String]) -> String? {
         for pattern in patterns.sorted(by: { $0.count > $1.count }) {
-            if let range = lower.range(of: pattern) {
+            let needle = folded(pattern)
+            if let range = lower.range(of: needle) {
                 let start = text.index(
                     text.startIndex,
                     offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound)
@@ -566,10 +604,10 @@ enum DriveIntentParser {
 
     private static func stripTrailingStartClause(_ dest: String) -> String {
         var result = dest
-        let lower = result.lowercased()
+        let lower = folded(result)
         for marker in [
             " z mojej lokalizacji", " z swojej lokalizacji", " ze swojej lokalizacji",
-            " z mojego punktu", " z mojej pozycji", " z lokalizacji", " stąd", " stad"
+            " z mojego punktu", " z mojej pozycji", " z lokalizacji", " stad"
         ] {
             if let range = lower.range(of: marker) {
                 result = String(result[..<result.index(result.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))])
@@ -737,10 +775,7 @@ enum DriveIntentExecutor {
             guard let coordinate = MapKitNavigationService.shared.location?.coordinate else {
                 return "Brak lokalizacji — nie mogę znaleźć restauracji."
             }
-            let location = MapKitNavigationService.shared.location
-            if let location, !location.allowsNearbyFoodOffer {
-                return "Stoisz już dłużej niż 5 minut — nie proponuję restauracji. Jedź dalej albo poproś ponownie w trasie."
-            }
+            // Jawna prośba głosowa zawsze dozwolona (także „najbliższa restauracja” na postoju).
             let interrupting = MapKitNavigationService.shared.mapState?.isNavigating == true
             return await RestaurantOfferService.shared.findAndPresentNearest(
                 near: coordinate,
@@ -1330,19 +1365,18 @@ enum DriveIntentExecutor {
         let lower = text.lowercased()
             .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
         let phrases = [
-            "moja lokalizacja", "mojej lokalizacji", "mojej lokalizacja",
+            "moja lokalizacja", "mojej lokalizacji", "mojej lokalizacja", "moja lokalizaca",
             "swojej lokalizacji", "swoja lokalizacja", "ze swojej lokalizacji",
             "skorzystaj z mojej lokalizacji", "skorzystaj z lokalizacji",
-            "uzyj mojej lokalizacji", "użyj mojej lokalizacji",
-            "uzyj lokalizacji", "użyj lokalizacji",
+            "uzyj mojej lokalizacji", "uzyj lokalizacji",
             "z mojej lokalizacji", "z swojej lokalizacji", "z lokalizacji",
             "mojego punktu", "z mojego punktu", "moj punkt",
-            "tu gdzie jestem", "tutaj gdzie jestem",
-            "z tutaj", "stąd", "stad", "z stad", "z stąd",
-            "obecna lokalizacja", "biezaca lokalizacja", "bieżąca lokalizacja",
-            "gps", "moja pozycja", "z mojej pozycji",
+            "tu gdzie jestem", "tutaj gdzie jestem", "tam gdzie jestem",
+            "z tutaj", "stad", "z stad",
+            "obecna lokalizacja", "biezaca lokalizacja",
+            "gps", "moja pozycja", "z mojej pozycji", "moja pozycja gps",
             "my location", "current location", "use my location",
-            "from here", "here"
+            "from here", "here", "use gps", "start from here"
         ]
         if phrases.contains(where: { lower.contains($0) }) { return true }
         let short = lower.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))

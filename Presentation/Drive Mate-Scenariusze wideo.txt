@@ -1,0 +1,444 @@
+================================================================================
+DRIVE MATE — SCENARIUSZE DO PREZENTACJI WIDEO
+================================================================================
+Wersja: 1.0
+Język: polski
+Format: landscape (poziomy iPhone w uchwycie / CarPlay-style)
+Czas całkowity (propozycja): ~6–8 minut (pełna wersja)
+             skrót marketingowy: ~90–120 sekund (sceny oznaczone ★)
+
+Przygotowanie przed nagraniem:
+  • iPhone w landscape, jasność wysoka, tryb Nie przeszkadzać
+  • Zgody: lokalizacja, mikrofon, mowa, kamera
+  • Zaakceptowana EULA nawigacji
+  • Settings: model auta + spalanie, wgrana muzyka, Autowyciszacz ON
+  • Opcjonalnie: Always Use My Location ON (upraszcza demo trasy)
+  • GPS na zewnątrz lub realistyczny ruch w symulatorze
+  • Ciche tło / lekki szum kabiny OK — unikaj głośnej muzyki spoza appki
+
+Legenda:
+  [EKRAN]     — co widać
+  [AKCJA]     — gest / tap
+  [GŁOS]      — co mówisz do Drive Mate
+  [NARRACJA]  — opcjonalny voice-over (można pominąć w wersji „hands-free only”)
+  [UWAGA]     — wskazówka operatorska
+  ★           — scena obowiązkowa w skrócie 90–120 s
+
+================================================================================
+CZĘŚĆ A — SKRÓT MARKETINGOWY (~90–120 s)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+A1. OTWARCIE ★  (~8 s)
+────────────────────────────────────────────────────────────────────────────────
+[EKRAN]   Splash: limonkowe auto Drive Mate na czarnym tle.
+[NARRACJA] „Drive Mate — kokpit AI do jazdy na iPhonie.”
+[UWAGA]   Zostaw splash 2–3 s, potem wejdź w Drive.
+
+────────────────────────────────────────────────────────────────────────────────
+A2. KOKPIT ★  (~10 s)
+────────────────────────────────────────────────────────────────────────────────
+[EKRAN]   Sidebar: DRIVE MATE / RECORDER / SETTINGS.
+          Mapa Apple Maps, pastylka „Where you wanna go”, Recently.
+[NARRACJA] „Jeden poziomy ekran: nawigacja, głos, muzyka, kamera.”
+[AKCJA]   Powolny pan po UI (sidebar → search → mapa).
+
+────────────────────────────────────────────────────────────────────────────────
+A3. TRASA GŁOSEM ★  (~25 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — z mojej lokalizacji jedź na Wawel.”
+[EKRAN]   Awatar liquid glass, poświata Siri, duck muzyki.
+          Animowane rysowanie limonkowej trasy, flaga na celu.
+[NARRACJA] „Mówisz naturalnie — Drive Mate prowadzi przez Apple Maps.”
+[UWAGA]   Jeśli Always Use My Location OFF: najpierw cel, potem „moja lokalizacja”.
+
+────────────────────────────────────────────────────────────────────────────────
+A4. ASYSTENT W TRASIE ★  (~30 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — jestem głodny.”
+[EKRAN]   Karta restauracji + potwierdzenie głosem.
+[GŁOS]    „Tak” / „Jedź”.
+          (krótko) potem: „Hey Drive — pauza.”
+[EKRAN]   Panel muzyki, muzyka się ścisza gdy mówi AI.
+[NARRACJA] „Jedzenie, muzyka, Chrome UI — bez odrywania wzroku.”
+
+────────────────────────────────────────────────────────────────────────────────
+A5. ZAMKNIĘCIE ★  (~15 s)
+────────────────────────────────────────────────────────────────────────────────
+[AKCJA]   Zakończ trasę (lub dojedź do krótkiego celu).
+[EKRAN]   Flaga z autkiem + haptyka → kafelki podsumowania.
+[NARRACJA] „Drive Mate. Ręce na kierownicy.”
+[EKRAN]   Logo / splash końcowy + napis „Drive Mate”.
+
+================================================================================
+CZĘŚĆ B — PEŁNA PREZENTACJA FUNKCJI (~6–8 min)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 01 — INTRO I PROBLEM  (~20–25 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel sceny: pokazać, po co istnieje Drive Mate.
+
+[EKRAN]   Splash → pusty Drive (idle).
+[NARRACJA]
+  „Telefon nie jest stworzony do jazdy. Za dużo aplikacji, za małe przyciski,
+   asystenci, którzy tylko gadają. Drive Mate to jeden kokpit: mapa, AI,
+   muzyka i kamera — sterowane głosem po polsku.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 02 — UKŁAD KOKPITU  (~30 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: liquid glass, sidebar, landscape.
+
+[EKRAN]   Idle Drive.
+[AKCJA]   Wskaż (kursorem / zoomem) kolejno:
+          1) lewy sidebar DRIVE MATE / RECORDER / SETTINGS
+          2) pastylkę „Where you wanna go”
+          3) Recently (siatka ostatnich miejsc)
+[NARRACJA]
+  „Układ poziomy. Duże cele. Czarny pasek omija Dynamic Island —
+   tekst jest w środku, nie wypycha UI.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 03 — WYBÓR CELU DOTYKIEM  (~40 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: klasyczny flow bez głosu.
+
+[AKCJA]   Tap „Where you wanna go” → wpisz / wybierz miejsce (np. lokalny plac).
+[AKCJA]   Potwierdź start: „USE MY LOCATION” (lub inne miejsce).
+[EKRAN]   Rysowanie trasy limonką, kamera jedzie z linią, flaga na mecie.
+[NARRACJA]
+  „Szukasz jak w Maps — ale w kokpicie pod jazdę. Trasa rysuje się animacją,
+   nie pojawia się nagle.”
+
+[UWAGA]   Potem zakończ trasę ALBO zostaw na Scenę 04 (głos w aktywnej trasie).
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 04 — HEY DRIVE: START + CEL W JEDNEJ ZDANIU  (~35 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: naturalna nawigacja głosowa.
+
+[Stan]    Idle lub po anulowaniu poprzedniej trasy.
+[GŁOS]    „Hey Drive.”
+[EKRAN]   Awatar + glow. Muzyka ścisza się (duck).
+[GŁOS]    „Z mojej lokalizacji chcę dotrzeć do Rynku Dębnickiego.”
+          (zamień na realny cel w Twoim mieście)
+[EKRAN]   Potwierdzenie TTS → trasa startuje.
+[NARRACJA]
+  „Możesz podać sam cel — Drive Mate dopyta skąd.
+   Albo start i cel naraz.”
+
+Wariant B (dopytanie o start):
+[GŁOS]    „Hey Drive — Rynek Główny.”
+[TTS]     „Skąd jedziemy…”
+[GŁOS]    „Moja lokalizacja.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 05 — CHROME W TRASIE  (~35 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: prędkość, skręt, recenter, Legal, muzyka.
+
+[EKRAN]   Nawigacja aktywna.
+[AKCJA]   Pokaż: kafelek prędkości (zielony), kafelek skrętu, Maps Legal,
+          pasek muzyki (play / prev / next).
+[NARRACJA]
+  „W trasie masz prędkość, wskazówki skrętu i muzykę.
+   Pastylka Legal unosi się nad playerem — zgodność z Apple Maps.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 06 — OSTRZEŻENIE O PRĘDKOŚCI  (~25 s)  [opcjonalne / poza miastem ostrożnie]
+────────────────────────────────────────────────────────────────────────────────
+Cel: czerwony puls + TTS.
+
+[UWAGA]   Nagrywaj TYLKO bezpiecznie (pasażer filmuje / odcinek testowy).
+          Alternatywa: pokaż UI w symulatorze / mock jeśli nie jedziesz.
+[EKRAN]   Prędkość > ~50 km/h → kafelek czerwony, puls.
+[TTS]     Drive Mate prosi o zwolnienie.
+[EKRAN]   Po zwolnieniu z powrotem zielony.
+[NARRACJA] „Limit miejski — Drive Mate nie milczy, gdy jedziesz za szybko.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 07 — JEDZENIE / RESTAURACJA  (~40 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: oferta + potwierdzenie głosem.
+
+[GŁOS]    „Hey Drive — najbliższa restauracja.”
+          (warianty: „jestem głodny”, „gdzie zjeść”, „mam ochotę na obiad”)
+[EKRAN]   Karta oferty restauracji.
+[GŁOS]    „Tak” / „Jedź tam.”
+[EKRAN]   Nowa trasa / zjazd; poprzedni cel zapamiętany jako przerwany.
+[NARRACJA]
+  „Asystent nie tylko mówi — zmienia trasę w MapKit.
+   Potwierdzasz głosem, ręce zostają na kierownicy.”
+
+Wariant anulowania:
+[GŁOS]    „Nie” / „Anuluj” / „Kontynuuj trasę.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 08 — STACJA PALIW  (~30 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — gdzie jest najbliższa stacja paliw?”
+[EKRAN]   Karta stacji.
+[GŁOS]    „Tak.”
+[NARRACJA] „To samo dla paliwa — szybki zjazd i powrót.”
+
+Wariant ceny:
+[GŁOS]    „Najtańsza stacja paliw.”
+[UWAGA]   MapKit nie ma live cen — AI tłumaczy ranking dystansu / kontekst.
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 09 — KOSZT / ZUŻYCIE PALIWA  (~30 s)
+────────────────────────────────────────────────────────────────────────────────
+Warunek: aktywna trasa + model auta w Settings.
+
+[GŁOS]    „Hey Drive — ile spalę na tej trasie?”
+          (warianty: „zużycie paliwa”, „ile będzie kosztować paliwo”, „koszt trasy”)
+[EKRAN]   Kafelek z km, litrami, kosztem PLN.
+[TTS]     Krótka odpowiedź z liczbami.
+[NARRACJA]
+  „Szacunek z Twojego modelu auta i spalania z ustawień —
+   nie zmyślony wynik z chatu.”
+
+Jeśli brak modelu:
+[TTS]     Prośba o „moje auto to …” albo Settings — pokaż to jako feature, nie błąd.
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 10 — PRZYWRÓĆ PRZERWANĄ TRASĘ  (~25 s)
+────────────────────────────────────────────────────────────────────────────────
+Warunek: wcześniej zjazd do restauracji/stacji (Scena 07/08).
+
+[GŁOS]    „Hey Drive — przywróć wcześniejszą trasę.”
+[EKRAN]   Cel wraca z AKTUALNEGO GPS — bez ekranu podsumowania.
+[NARRACJA]
+  „Zjazd nie kasuje kontekstu. Wracasz na poprzedni cel od razu.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 11 — KORKI I ULICA  (~40 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — jakie są korki?”
+[EKRAN]   / [TTS]  Krótka ocena ruchu.
+[GŁOS]    „Hey Drive — co to za ulica?”
+          albo: „Opowiedz historię tej ulicy.”
+[EKRAN]   Karta info / narracja (bez surowych kodów rejestrów).
+[NARRACJA]
+  „Wiedza o miejscu i ulicy — podana jak dla kierowcy, nie jak z urzędu.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 12 — MUZYKA GŁOSEM  (~30 s)
+────────────────────────────────────────────────────────────────────────────────
+Warunek: biblioteka z Settings ma ≥2 utwory.
+
+[GŁOS]    „Hey Drive — następny utwór.”
+[EKRAN]   Panel muzyki, zmiana tracka.
+[GŁOS]    „Pauza.”
+[GŁOS]    „Odpauzuj.” / „Wznów muzykę.”
+[NARRACJA]
+  „Muzyka w aplikacji. Gdy Drive Mate mówi — ścisza się, nie umiera.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 13 — CHROME UI GŁOSEM  (~25 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — ukryj prędkościomierz.”
+[EKRAN]   Kafelek znika.
+[GŁOS]    „Pokaż prędkościomierz.”
+[GŁOS]    „Ukryj zegar.” / „Pokaż Drive.”
+[NARRACJA] „Kokpit sprzątasz głosem — zostaje to, czego potrzebujesz.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 14 — MODEL AUTA GŁOSEM  (~20 s)
+────────────────────────────────────────────────────────────────────────────────
+[GŁOS]    „Hey Drive — moje auto to Toyota Corolla.”
+[TTS]     Potwierdzenie zapisu.
+[NARRACJA] „Profil spalania bez grzebania w menu… albo z Settings — jak wolisz.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 15 — HISTORIA WIZYT  (~25 s)  [opcjonalne]
+────────────────────────────────────────────────────────────────────────────────
+Warunek: wcześniejsze wizyty w pamięci (do 3 dni).
+
+[GŁOS]    „Hey Drive — weź mnie tam gdzie pojechałem wczoraj.”
+[EKRAN]   Nawigacja do zapisanego miejsca.
+[NARRACJA] „Drive Mate pamięta ostatnie cele — i prowadzi z powrotem.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 16 — UCZCIWA ODMOWA  (~15 s)
+────────────────────────────────────────────────────────────────────────────────
+Cel: pokazać, że AI nie zmyśla.
+
+[GŁOS]    „Hey Drive — zadzwoń do mamy.”
+          albo: „Wylosuj trasę gdziekolwiek.”
+[TTS]     Jasna odmowa: tego nie umie / nie losuje miejsc.
+[NARRACJA]
+  „Gdy czegoś nie potrafi — mówi wprost.
+   Zero fałszywych ETA i zmyślonych adresów.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 17 — KONIEC TRASY  (~35 s)
+────────────────────────────────────────────────────────────────────────────────
+[AKCJA]   Dojedź / „Zakończ trasę”.
+[EKRAN]   Limonkowa flaga z autkiem, mocna haptyka.
+[EKRAN]   Kafelki podsumowania (dystans, czas…).
+[AKCJA]   Opcjonalnie: parkingi w pobliżu.
+[NARRACJA]
+  „Koniec jazdy z rytuałem — flaga, podsumowanie, parking jeśli trzeba.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 18 — RECORDER  (~35 s)
+────────────────────────────────────────────────────────────────────────────────
+[AKCJA]   Sidebar → RECORDER.
+[EKRAN]   Podgląd tylnej kamery.
+[AKCJA]   Nagraj krótki klip (~10 s) / pokaż wskaźnik REC.
+[AKCJA]   Wróć na Drive — pokaż, że ciągłe nagrywanie nie zabija muzyki.
+[NARRACJA]
+  „Recorder pod jazdę: klipy z tyłu, lokalnie, bez psucia audio asystenta.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 19 — SETTINGS  (~45 s)
+────────────────────────────────────────────────────────────────────────────────
+[AKCJA]   Sidebar → SETTINGS.
+Pokaż kolejno:
+  1) SOUND — slider głośności
+  2) Autowyciszacz (duck gdy asystent mówi)
+  3) Always Use My Location
+  4) MODEL AUTA + spalanie
+  5) Motyw jasny/ciemny (krótko)
+  6) Import muzyki / lista utworów
+  7) Klipy z recordera
+  8) Wejście w personalizację Drive Mate
+[NARRACJA]
+  „Tu kalibrujesz kokpit: dźwięk, GPS, auto, media i pamięć asystenta.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 20 — PERSONALIZACJA I TRENING HEY DRIVE  (~40 s)
+────────────────────────────────────────────────────────────────────────────────
+[EKRAN]   Settings → Drive Mate / personalizacja.
+Pokaż:
+  • Ostatnie miejsca (3 dni)
+  • Preferencje tras (unikane ulice)
+  • Trening „Hey Drive” (3 próbki wymowy)
+[AKCJA]   Krótko nagraj 1–2 próbki wake (jeśli komfortowo na kamerze).
+[NARRACJA]
+  „Im więcej jeździsz, tym bardziej Drive Mate prowadzi po Twojemu —
+   i lepiej słyszy, jak mówisz Hey Drive.”
+
+────────────────────────────────────────────────────────────────────────────────
+SCENA 21 — OUTRO  (~15 s)
+────────────────────────────────────────────────────────────────────────────────
+[EKRAN]   Powrót do Drive / splash z limonkowym autem.
+[NARRACJA]
+  „Drive Mate. AI-powered in-car companion.
+   Nawigacja. Głos. Muzyka. Kamera. Jedna aplikacja pod kierownicę.”
+[TEKST NA EKRANIE]
+  Drive Mate
+  First Look
+  iOS · Apple Maps · On-device AI
+
+================================================================================
+CZĘŚĆ C — BANK KOMEND GŁOSOWYCH (DO NAGRAŃ / NAPISÓW)
+================================================================================
+
+NAWIGACJA
+  • „Hey Drive — Rynek Dębnicki.”
+  • „Z mojej lokalizacji jedź na Wawel.”
+  • „Chcę dotrzeć do dworca z mojej lokalizacji.”
+  • „Moja lokalizacja.”          (odpowiedź na „skąd?”)
+  • „Anuluj trasę.”
+  • „Przywróć wcześniejszą trasę.”
+  • „Weź mnie tam gdzie pojechałem wczoraj.”
+
+JEDZENIE / PALIWO
+  • „Jestem głodny.”
+  • „Najbliższa restauracja.”
+  • „Gdzie zjeść?”
+  • „Mam ochotę na obiad.”
+  • „Najbliższa stacja paliw.”
+  • „Najtańsza stacja.”
+  • „Ile spalę?”
+  • „Zużycie paliwa.”
+  • „Ile będzie kosztować paliwo?”
+  • „Koszt trasy.”
+
+MAPA / MIEJSCE
+  • „Jakie są korki?”
+  • „Korki na Długiej.”
+  • „Co to za ulica?”
+  • „Opowiedz historię tej ulicy.”
+
+MUZYKA
+  • „Pauza.”
+  • „Odpauzuj.” / „Wznów muzykę.”
+  • „Następny utwór.”
+  • „Poprzedni utwór.”
+
+UI
+  • „Ukryj prędkościomierz.”
+  • „Pokaż prędkościomierz.”
+  • „Ukryj zegar.”
+  • „Pokaż Drive.”
+
+PROFIL
+  • „Moje auto to Toyota Corolla.”
+
+KONTROLA SESJI
+  • „Anuluj nasłuchiwanie.”
+  • „Przestań słuchać.”
+
+DEMO ODMOWY
+  • „Zadzwoń do mamy.”
+  • „Wylosuj trasę gdziekolwiek.”
+
+================================================================================
+CZĘŚĆ D — PLAN MONTAŻU (PROPOZYCJA)
+================================================================================
+
+Wersja 90–120 s (reels / pitch):
+  A1 → A2 → A3 → A4 → A5
+  Napisy: komendy głosowe dużym fontem, kontrast białe/limonka na ciemnym.
+
+Wersja 3 min (demo produktowe):
+  01 Intro
+  02 Kokpit
+  04 Nawigacja głosem
+  05 Chrome
+  07 Restauracja
+  09 Paliwo / koszt
+  10 Przywróć trasę
+  12 Muzyka
+  17 Koniec trasy
+  21 Outro
+
+Wersja 6–8 min (pełny walkthrough):
+  Sceny 01–21 po kolei; Sceny 06, 15 opcjonalne.
+
+Muzyka pod spodem:
+  Utwór z biblioteki Drive Mate (niski poziom) ALBO bez muzyki poza appką —
+  żeby było słychać duck i TTS.
+
+Napisy sugerowane (PL):
+  „Hey Drive”
+  „Apple Maps · legalnie”
+  „Naturalny polski”
+  „Bez zmyślonych tras”
+  „Ręce na kierownicy”
+
+================================================================================
+CZĘŚĆ E — CHECKLISTA TECHNICZNA PRZED NAGRANIEM
+================================================================================
+
+[ ] Landscape lock / Orientation Lock
+[ ] EULA nawigacji zaakceptowana
+[ ] Lokalizacja: Pełna dokładność
+[ ] Mikrofon + Speech: dozwolone
+[ ] Model auta + spalanie uzupełnione
+[ ] ≥2 utwory w bibliotece
+[ ] Autowyciszacz włączony
+[ ] Hey Drive wytrenowany (opcjonalnie, poprawia wake)
+[ ] Cel testowy blisko (krótka trasa na demo końca)
+[ ] Drugi telefon / kamera na uchwyt landscape
+[ ] Haptyka słyszalna/widoczna przy fladze końca
+[ ] Tryb samolot OFF (MapKit potrzebuje sieci do search/route)
+
+================================================================================
+KONIEC PLIKU
+Drive Mate — scenariusze prezentacji wideo
+================================================================================

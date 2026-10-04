@@ -95,11 +95,12 @@ final class PolishSpeechRecognizer: NSObject, ObservableObject {
 
         do {
             let session = AVAudioSession.sharedInstance()
-            // spokenAudio działa znacznie lepiej niż measurement dla wake word
-            // mixWithOthers — muzyka w aplikacji gra dalej (ściszenie robi MusicPlayerService.duck).
+            // Komendy: voiceChat = lepsza redukcja szumu kabiny.
+            // Wake: spokenAudio — stabilniejsze łapanie „Hey Drive”.
+            let sessionMode: AVAudioSession.Mode = mode == .command ? .voiceChat : .spokenAudio
             try session.setCategory(
                 .playAndRecord,
-                mode: .spokenAudio,
+                mode: sessionMode,
                 options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothHFP]
             )
             try session.setActive(true, options: .notifyOthersOnDeactivation)
@@ -115,17 +116,30 @@ final class PolishSpeechRecognizer: NSObject, ObservableObject {
 
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
-        req.requiresOnDeviceRecognition = false
+        // On-device gdy dostępne — mniej opóźnień i lepsza odporność w aucie.
+        req.requiresOnDeviceRecognition = mode == .command && (recognizer.supportsOnDeviceRecognition)
         req.taskHint = mode == .wakeSpot ? .search : .dictation
-        if #available(iOS 16.0, *) {
+        if #available(iOS 16, *) {
             req.addsPunctuation = false
         }
-        var context = [
-            "Hey Drive", "Hej Drive", "Hey Drive Mate", "Hej Drive Mate",
-            "Drive Mate", "ok Drive", "ej Drive", "Hej Drajw", "Hey Dryve"
-        ]
-        context.append(contentsOf: DriveMateMemoryStore.shared.learnedWakePhrases)
-        req.contextualStrings = Array(Set(context)).prefix(20).map { String($0) }
+        if mode == .wakeSpot {
+            var context = [
+                "Hey Drive", "Hej Drive", "Hey Drive Mate", "Hej Drive Mate",
+                "Drive Mate", "ok Drive", "ej Drive", "Hej Drajw", "Hey Dryve"
+            ]
+            context.append(contentsOf: DriveMateMemoryStore.shared.learnedWakePhrases)
+            req.contextualStrings = Array(Set(context)).prefix(20).map { String($0) }
+        } else {
+            // Bias słownika pod naturalne komendy kierowcy (ASR przy szumie).
+            req.contextualStrings = [
+                "zużycie paliwa", "ile spalę", "koszt paliwa", "koszt trasy", "spalanie",
+                "najbliższa restauracja", "jestem głodny", "gdzie zjeść", "restauracja",
+                "stacja paliw", "zatankować", "najbliższa stacja",
+                "moja lokalizacja", "z mojej lokalizacji", "jedź do", "nawigacja",
+                "przywróć trasę", "anuluj trasę", "następny utwór", "pauza",
+                "Hey Drive", "Drive Mate"
+            ]
+        }
         request = req
 
         let input = audioEngine.inputNode
@@ -276,8 +290,8 @@ final class PolishSpeechRecognizer: NSObject, ObservableObject {
     private func armCommandSilenceTimer() {
         silenceTask?.cancel()
         silenceTask = Task { @MainActor in
-            // ~0.75 s ciszy po ostatnim słowie = koniec nagrania dyktafonu
-            try? await Task.sleep(nanoseconds: 750_000_000)
+            // ~1.15 s ciszy — daje czas przy lekkim szumie kabiny / pauzach w mowie.
+            try? await Task.sleep(nanoseconds: 1_150_000_000)
             guard !Task.isCancelled, status == .listening, listenMode == .command else { return }
             // Zawsze kończ — nawet pusty tekst (asystent zamknie sesję).
             finishWithCurrentTranscript(allowEmpty: true)

@@ -470,9 +470,12 @@ enum VoiceCommandProcessor {
 
     private static func looksLikeMapCapability(_ text: String) -> Bool {
         let lower = text.lowercased()
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
         let keys = [
-            "jedź", "jedz", "trasa", "nawig", "korki", "korek", "ulic", "restaur",
-            "głod", "glod", "mapa", "dojazd", "zaprowadź", "zaprowadz", "miejsce"
+            "jedz", "trasa", "nawig", "korki", "korek", "ulic", "restaur",
+            "glod", "jedzen", "obiad", "knajp", "mapa", "dojazd", "zaprowadz",
+            "miejsce", "paliw", "paliv", "spalan", "zuzyc", "stacja", "tankow",
+            "koszt", "benzyn", "food", "fuel", "restaurant"
         ]
         return keys.contains { lower.contains($0) }
     }
