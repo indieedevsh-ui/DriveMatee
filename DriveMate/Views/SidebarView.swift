@@ -11,8 +11,11 @@ struct SidebarView: View {
 
     private let labelWidth: CGFloat = 108
     private let bulgeWidth: CGFloat = 22
+    /// Wyjście w lewo poza ekran — krawędź AA / material nie jest widoczna.
+    private let edgeBleed: CGFloat = 40
 
-    private var totalWidth: CGFloat { leadingSafe + labelWidth + bulgeWidth }
+    private var contentWidth: CGFloat { leadingSafe + labelWidth + bulgeWidth }
+    private var laidOutWidth: CGFloat { contentWidth + edgeBleed }
 
     var body: some View {
         GeometryReader { geo in
@@ -29,10 +32,10 @@ struct SidebarView: View {
                     itemHeight: itemH,
                     gap: gap,
                     topPad: vPad,
-                    contentStartX: leadingSafe,
+                    contentStartX: edgeBleed + leadingSafe,
                     bulgeWidth: bulgeWidth
                 )
-                .frame(width: totalWidth, height: h)
+                .frame(width: laidOutWidth, height: h)
 
                 VStack(spacing: gap) {
                     ForEach(AppTab.allCases) { tab in
@@ -65,10 +68,12 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.top, vPad)
-                .padding(.leading, leadingSafe)
+                .padding(.leading, edgeBleed + leadingSafe)
             }
         }
-        .frame(width: totalWidth)
+        .frame(width: laidOutWidth)
+        .offset(x: -edgeBleed)
+        .padding(.trailing, -edgeBleed)
         .ignoresSafeArea(edges: [.top, .bottom, .leading])
     }
 }
@@ -92,35 +97,34 @@ private struct SidebarGlassShape: View {
             )
 
             ZStack {
+                shape.fill(Color.black)
+
+                // Material tylko od strefy treści — nie na bledzie poza ekranem.
                 shape.fill(.regularMaterial)
+                    .opacity(0.5)
+                    .mask(
+                        HStack(spacing: 0) {
+                            Color.clear.frame(width: max(0, contentStartX - 4))
+                            Color.white
+                        }
+                    )
 
                 // 100% czarny pod island → liquid glass przy wewnętrznej krawędzi
                 shape.fill(
                     LinearGradient(
                         stops: [
                             .init(color: .black, location: 0.0),
-                            .init(color: .black, location: max(0.15, contentStartX / max(size.width, 1) * 0.85)),
-                            .init(color: Color.black.opacity(0.65), location: 0.55),
-                            .init(color: Color.black.opacity(0.22), location: 0.82),
-                            .init(color: Color.black.opacity(0.06), location: 1.0)
+                            .init(color: .black, location: max(0.18, contentStartX / max(size.width, 1) * 0.9)),
+                            .init(color: Color.black.opacity(0.55), location: 0.58),
+                            .init(color: Color.black.opacity(0.18), location: 0.84),
+                            .init(color: Color.black.opacity(0.04), location: 1.0)
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
                 )
-
-                // Obrys tylko przy wewnętrznej (prawej) krawędzi — bez kreski poza lewym marginesem.
-                shape
-                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
-                    .mask(
-                        HStack(spacing: 0) {
-                            Color.clear.frame(width: max(0, size.width - bulgeWidth - 3))
-                            Color.white
-                        }
-                    )
             }
             .frame(width: size.width, height: size.height)
-            .clipShape(shape)
         }
         .allowsHitTesting(false)
     }
@@ -154,6 +158,7 @@ private struct SidebarPath: Shape {
         let pullOut: CGFloat = half * 0.42
 
         var path = Path()
+        // Lewa krawędź = x:0 w szerszym frame z bleem → po offsetcie poza ekranem.
         path.move(to: CGPoint(x: 0, y: 0))
         path.addLine(to: CGPoint(x: w - baseR, y: 0))
         path.addQuadCurve(to: CGPoint(x: w, y: baseR), control: CGPoint(x: w, y: 0))
