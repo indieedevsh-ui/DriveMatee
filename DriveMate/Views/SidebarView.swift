@@ -45,11 +45,16 @@ struct SidebarView: View {
                         } label: {
                             Text(tab.title)
                                 .font(.system(
-                                    size: isActive ? 22 : 13,
+                                    size: tab == .drive
+                                        ? (isActive ? 15 : 11)
+                                        : (isActive ? 22 : 13),
                                     weight: isActive ? .bold : .semibold,
                                     design: .default
                                 ))
-                                .tracking(isActive ? 1.2 : 0.6)
+                                .tracking(isActive ? (tab == .drive ? 0.6 : 1.2) : 0.6)
+                                .multilineTextAlignment(.center)
+                                .minimumScaleFactor(0.75)
+                                .lineLimit(2)
                                 .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.45))
                                 .shadow(color: isActive ? .white.opacity(0.85) : .clear, radius: isActive ? 10 : 0)
                                 .shadow(color: isActive ? .white.opacity(0.4) : .clear, radius: isActive ? 18 : 0)

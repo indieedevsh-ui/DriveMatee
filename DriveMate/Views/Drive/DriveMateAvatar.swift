@@ -106,6 +106,10 @@ struct DriveMateAvatar: View {
     var eyesOnly: Bool = false
     /// Opóźnienie pojawienia oczu po starcie poświaty (sekundy).
     var eyesDelay: Double = 0.32
+    /// Bez cyan glow / gradientów — sam Drive Mate (nawigacja).
+    var minimalStyle: Bool = false
+    /// Oczy patrzą w lewy dolny róg (konfiguracja głosowa).
+    var gazeBottomLeft: Bool = false
 
     @State private var appearProgress: CGFloat = 0
     @State private var eyesProgress: CGFloat = 0
@@ -149,28 +153,38 @@ struct DriveMateAvatar: View {
     }
 
     private var eyesOnlyBody: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 16) {
             eye
             eye
         }
-        .offset(x: lookOffset)
+        // Stałe spojrzenie w lewy dolny róg (albo lekki idle look)
+        .offset(
+            x: gazeBottomLeft ? -7 + lookOffset * 0.15 : lookOffset,
+            y: gazeBottomLeft ? 9 : 0
+        )
+        .rotationEffect(gazeBottomLeft ? .degrees(-12) : .degrees(0))
         .scaleEffect(y: blinkScale, anchor: .center)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .scaleEffect(0.55 + 0.45 * eyesProgress)
         .opacity(Double(eyesProgress))
         .offset(y: (1 - eyesProgress) * -18)
-        .shadow(color: cyanGlow.opacity(0.35 + 0.4 * speechGlow), radius: 10 + 6 * speechGlow)
+        .shadow(
+            color: cyanGlow.opacity(gazeBottomLeft ? 0.15 : (0.35 + 0.4 * speechGlow)),
+            radius: gazeBottomLeft ? 6 : (10 + 6 * speechGlow)
+        )
         .animation(.easeInOut(duration: 0.28), value: speechGlow)
     }
 
     private var fullBody: some View {
-        let hear = speechGlow
+        let hear = minimalStyle ? 0 : speechGlow
         return ZStack {
-            Capsule(style: .continuous)
-                .fill(cyanGlow.opacity((0.18 + 0.35 * hear) * pulseGlow))
-                .blur(radius: 14 + 6 * hear)
-                .scaleEffect(1.06 + 0.04 * hear)
+            if !minimalStyle {
+                Capsule(style: .continuous)
+                    .fill(cyanGlow.opacity((0.18 + 0.35 * hear) * pulseGlow))
+                    .blur(radius: 14 + 6 * hear)
+                    .scaleEffect(1.06 + 0.04 * hear)
+            }
 
             Capsule(style: .continuous)
                 .fill(.clear)
@@ -179,39 +193,51 @@ struct DriveMateAvatar: View {
                         .clipShape(Capsule(style: .continuous))
                 }
                 .overlay {
-                    Capsule(style: .continuous)
-                        .fill(Color(red: 0.45, green: 0.88, blue: 1.0).opacity(0.22 * hear))
+                    if !minimalStyle {
+                        Capsule(style: .continuous)
+                            .fill(Color(red: 0.45, green: 0.88, blue: 1.0).opacity(0.22 * hear))
+                    }
                 }
                 .overlay {
                     Capsule(style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.9),
-                                    cyanGlow.opacity(0.7 + 0.25 * hear),
-                                    Color.white.opacity(0.35)
-                                ],
+                                colors: minimalStyle
+                                    ? [Color.white.opacity(0.55), Color.white.opacity(0.22)]
+                                    : [
+                                        Color.white.opacity(0.9),
+                                        cyanGlow.opacity(0.7 + 0.25 * hear),
+                                        Color.white.opacity(0.35)
+                                    ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
-                            lineWidth: 1.5
+                            lineWidth: minimalStyle ? 1.1 : 1.5
                         )
                 }
                 .overlay {
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.28 + 0.12 * hear),
-                                    Color(red: 0.6, green: 0.9, blue: 1.0).opacity(0.08 + 0.2 * hear),
-                                    .clear
-                                ],
-                                startPoint: .top,
-                                endPoint: .center
+                    if !minimalStyle {
+                        Capsule(style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.28 + 0.12 * hear),
+                                        Color(red: 0.6, green: 0.9, blue: 1.0).opacity(0.08 + 0.2 * hear),
+                                        .clear
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .center
+                                )
                             )
-                        )
+                    }
                 }
-                .shadow(color: cyanGlow.opacity((0.35 + 0.4 * hear) * pulseGlow), radius: 16 + 8 * hear, y: 2)
+                .shadow(
+                    color: minimalStyle
+                        ? Color.black.opacity(0.28)
+                        : cyanGlow.opacity((0.35 + 0.4 * hear) * pulseGlow),
+                    radius: minimalStyle ? 10 : (16 + 8 * hear),
+                    y: 2
+                )
 
             VStack(spacing: 11) {
                 HStack(spacing: 22) {
@@ -225,9 +251,8 @@ struct DriveMateAvatar: View {
                     .fill(LinearGradient(colors: [eyeTop, eyeBottom], startPoint: .top, endPoint: .bottom))
                     .frame(width: mood == .speaking ? 26 : 16, height: mood == .speaking ? 5 : 3.8)
                     .shadow(color: cyanGlow.opacity(0.55), radius: 4)
-                    .offset(x: 8)
             }
-            .offset(x: 16, y: 4)
+            .offset(y: 2)
         }
         .frame(width: headWidth, height: headHeight)
         .offset(y: (1 - appearProgress) * -(headHeight + 36))
@@ -275,14 +300,21 @@ struct DriveMateAvatar: View {
 
     private func startIdleMotion() {
         stopIdleMotion()
-        withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { pulseGlow = 1 }
-        lookTask = Task { @MainActor in
-            var dir: CGFloat = 1
-            while !Task.isCancelled {
-                withAnimation(.easeInOut(duration: 1.35)) { lookOffset = 5.5 * dir }
-                dir *= -1
-                try? await Task.sleep(nanoseconds: 2_100_000_000)
+        if !minimalStyle {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { pulseGlow = 1 }
+        }
+        // Przy spojrzeniu w lewy dolny — bez bujania w bok
+        if !gazeBottomLeft {
+            lookTask = Task { @MainActor in
+                var dir: CGFloat = 1
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 1.35)) { lookOffset = 5.5 * dir }
+                    dir *= -1
+                    try? await Task.sleep(nanoseconds: 2_100_000_000)
+                }
             }
+        } else {
+            lookOffset = 0
         }
         blinkTask = Task { @MainActor in
             while !Task.isCancelled {

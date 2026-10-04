@@ -258,10 +258,16 @@ struct DriveView: View {
 
     private var isNavigating: Bool { mapState.isNavigating }
     private var showingTripEnd: Bool { tripSummary != nil }
-    private var showAvatarTopTrailing: Bool {
-        // Kafelek Drive Mate (oczy + minka) przy aktywnym asystencie w sekcji Drive
+    /// Pełny Drive Mate (nawigacja / asystent) — bez cyan gradientu.
+    private var showNavDriveMate: Bool {
         !showingTripEnd
-            && (idleVoiceMode || (assistant.isAvatarVisible && !assistant.isWakeListening))
+            && !idleVoiceMode
+            && assistant.isAvatarVisible
+            && !assistant.isWakeListening
+    }
+    /// Konfiguracja głosowa — same oczy w prawym górnym + poświata (Siri glow).
+    private var showVoiceConfigEyes: Bool {
+        !showingTripEnd && idleVoiceMode
     }
     private var showComplianceMap: Bool {
         // Bez mini-mapki przy konfiguracji trasy / wyborze celu — zostaw tylko podgląd korków.
@@ -348,30 +354,53 @@ struct DriveView: View {
                 .allowsHitTesting(true)
             }
 
-            // Drive Mate — kafelek liquid glass u góry (oczy + minka), tylko sekcja Drive
-            if showAvatarTopTrailing {
+            // Nawigacja / asystent — sam Drive Mate (bez gradientu), wycentrowany
+            if showNavDriveMate {
                 VStack {
-                    HStack {
-                        Spacer(minLength: 0)
-                        DriveMateAvatar(
-                            isVisible: assistant.isAvatarVisible || idleVoiceMode,
-                            mood: assistant.avatarMood,
-                            speechGlow: max(assistant.speechGlow, assistant.audioLevel),
-                            eyesOnly: false,
-                            eyesDelay: 0
-                        )
-                        .onTapGesture {
-                            assistant.toggleListening()
-                        }
-                        Spacer(minLength: 0)
+                    DriveMateAvatar(
+                        isVisible: true,
+                        mood: assistant.avatarMood,
+                        speechGlow: 0,
+                        eyesOnly: false,
+                        eyesDelay: 0,
+                        minimalStyle: true
+                    )
+                    .onTapGesture {
+                        assistant.toggleListening()
                     }
-                    .padding(.leading, leadingChrome)
                     .padding(.top, 6)
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .zIndex(20)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+                .allowsHitTesting(true)
+            }
+
+            // Konfiguracja głosowa — oczy w prawym górnym, spojrzenie w lewy dolny; poświata = Siri glow
+            if showVoiceConfigEyes {
+                VStack {
+                    HStack {
+                        Spacer(minLength: 0)
+                        DriveMateAvatar(
+                            isVisible: true,
+                            mood: assistant.avatarMood,
+                            speechGlow: max(assistant.speechGlow, assistant.audioLevel),
+                            eyesOnly: true,
+                            eyesDelay: 0.2,
+                            gazeBottomLeft: true
+                        )
+                        .onTapGesture {
+                            assistant.toggleListening()
+                        }
+                        .padding(.trailing, 36)
+                        .padding(.top, 14)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(20)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 .allowsHitTesting(true)
             }
 
@@ -460,7 +489,8 @@ struct DriveView: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: isNavigating)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: isMusicBarVisible)
         .animation(.spring(response: 0.48, dampingFraction: 0.86), value: showingTripEnd)
-        .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showAvatarTopTrailing)
+        .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showNavDriveMate)
+        .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showVoiceConfigEyes)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: restaurantOffer.phase)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: gasOffer.phase)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: infoCard.isActive)
@@ -585,9 +615,7 @@ struct DriveView: View {
                 Spacer()
                 DriveMatePanel(
                     assistant: assistant,
-                    guidance: mapState.nextTurnGuidance,
-                    showNavDriveComposer: true,
-                    showDriveButton: chromeVisibility.isVisible(.driveButton)
+                    guidance: mapState.nextTurnGuidance
                 )
                 .padding(.trailing, 36)
                 .padding(.top, 12)

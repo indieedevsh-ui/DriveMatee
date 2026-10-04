@@ -19,11 +19,18 @@ final class LocationSpeedService: NSObject, ObservableObject {
     private var smoothedSpeedMps: Double = 0
     private var lastLocationForDelta: CLLocation?
     private var recentSpeedSamples: [Double] = []
+    /// Ile kolejnych „ruchomych” próbek zanim pokażemy prędkość > 0.
+    private var movingStreak = 0
+    private var stillStreak = 0
 
-    /// Poniżej tego progu (km/h) pokazujemy 0 — spacer / szum GPS.
-    private let displayFloorKmh = 3.0
-    /// Prędkość GPS poniżej tego (m/s ≈ 0.7 km/h) traktuj jako postój.
-    private let rawStillMps = 0.45
+    /// Poniżej tego (km/h) zawsze 0 — szum GPS / mikrodrgania.
+    private let displayFloorKmh = 8.0
+    /// GPS speed poniżej tego (m/s ≈ 2.5 km/h) = postój.
+    private let rawStillMps = 0.70
+    /// Wymagana dokładność pozycji do wiarygodnej prędkości (m).
+    private let maxAccuracyForSpeed: CLLocationAccuracy = 35
+    /// Ile próbek ruchu z rzędu, by wyjść z zera.
+    private let movingConfirmCount = 3
 
     /// true gdy jedzie LUB stoi krócej niż 5 minut (warunek oferty restauracji).
     var allowsNearbyFoodOffer: Bool {
@@ -72,8 +79,8 @@ extension LocationSpeedService: CLLocationManagerDelegate {
     }
 
     private func ingest(_ location: CLLocation) {
-        // Odrzuć bardzo niepewne pozycje
-        if location.horizontalAccuracy < 0 || location.horizontalAccuracy > 65 {
+        // Odrzuć niepewne pozycje
+        if location.horizontalAccuracy < 0 || location.horizontalAccuracy > 80 {
             return
         }
 
@@ -81,7 +88,7 @@ extension LocationSpeedService: CLLocationManagerDelegate {
         if let last = lastPublishedCoordinate {
             let moved = CLLocation(latitude: last.latitude, longitude: last.longitude)
                 .distance(from: location)
-            if moved >= 6 {
+            if moved >= 8 {
                 lastPublishedCoordinate = newCoord
                 coordinate = newCoord
             }
@@ -90,37 +97,64 @@ extension LocationSpeedService: CLLocationManagerDelegate {
             coordinate = newCoord
         }
 
+        // Słaba dokładność pozycji → nie zgaduj prędkości (typowy fałszywy „6 km/h” w miejscu)
+        if location.horizontalAccuracy > maxAccuracyForSpeed {
+            forceStationary()
+            lastLocationForDelta = location
+            return
+        }
+
         let filteredMps = realisticSpeedMps(from: location)
-        // EMA — mocniejsze wygładzenie przy niskich prędkościach
-        let alpha = filteredMps < 2.0 ? 0.22 : 0.38
+
+        // EMA — przy niskich prędkościach mocno tłum
+        let alpha = filteredMps < 2.5 ? 0.14 : 0.32
         if smoothedSpeedMps <= 0.01 {
             smoothedSpeedMps = filteredMps
         } else {
             smoothedSpeedMps = smoothedSpeedMps * (1 - alpha) + filteredMps * alpha
         }
 
-        // Mediana z ostatnich próbek — tłumi pojedyncze skoki (np. 11 km/h przy spacerze)
         recentSpeedSamples.append(smoothedSpeedMps)
-        if recentSpeedSamples.count > 5 {
+        if recentSpeedSamples.count > 7 {
             recentSpeedSamples.removeFirst()
         }
         let medianMps = median(recentSpeedSamples)
         var kmh = medianMps * 3.6
 
-        // Deadband: wolny spacer / drganie GPS → 0
+        // Deadband + szybki powrót do zera
         if kmh < displayFloorKmh {
             kmh = 0
-            smoothedSpeedMps *= 0.7
+            smoothedSpeedMps *= 0.45
         }
 
-        // Przy słabej dokładności prędkości nie podbijaj wskazań
-        if location.speedAccuracy > 0, location.speedAccuracy > 1.8, kmh < 15 {
-            kmh = min(kmh, max(0, (location.speed >= 0 ? location.speed : 0) * 3.6))
+        // Słaba dokładność prędkości GPS
+        if location.speedAccuracy >= 0, location.speedAccuracy > 1.2, kmh < 25 {
+            let rawKmh = location.speed >= 0 ? location.speed * 3.6 : 0
+            kmh = min(kmh, max(0, rawKmh))
             if kmh < displayFloorKmh { kmh = 0 }
         }
 
-        let display = Int(kmh.rounded())
-        let nowMoving = display >= 4
+        // Histereza: nie pokazuj ruchu po jednej szumowej próbce
+        if kmh >= displayFloorKmh {
+            movingStreak += 1
+            stillStreak = 0
+        } else {
+            stillStreak += 1
+            movingStreak = 0
+            kmh = 0
+        }
+
+        var display = Int(kmh.rounded())
+        if movingStreak < movingConfirmCount {
+            display = 0
+        }
+        // Po 2 próbkach postoju — natychmiast 0
+        if stillStreak >= 2 {
+            display = 0
+            smoothedSpeedMps = 0
+        }
+
+        let nowMoving = display >= Int(displayFloorKmh.rounded())
         if nowMoving {
             isMoving = true
             stationarySince = nil
@@ -139,41 +173,64 @@ extension LocationSpeedService: CLLocationManagerDelegate {
         lastLocationForDelta = location
     }
 
-    /// Realistyczna prędkość w m/s z GPS + sanity check dystansu/czasu.
-    private func realisticSpeedMps(from location: CLLocation) -> Double {
-        var candidates: [Double] = []
+    private func forceStationary() {
+        movingStreak = 0
+        stillStreak += 1
+        smoothedSpeedMps *= 0.3
+        recentSpeedSamples.append(0)
+        if recentSpeedSamples.count > 7 { recentSpeedSamples.removeFirst() }
+        if speedKmh != 0 {
+            lastSpeedPublish = 0
+            speedKmh = 0
+        }
+        if isMoving || stationarySince == nil {
+            stationarySince = Date()
+        }
+        isMoving = false
+    }
 
-        // 1) Natywna prędkość GPS (gdy wiarygodna)
+    /// Realistyczna prędkość w m/s — preferuj natywne GPS speed; delta pozycji tylko jako sanity check.
+    private func realisticSpeedMps(from location: CLLocation) -> Double {
+        var gpsSpeed: Double?
+
         if location.speed >= 0 {
-            let speedAccOK = location.speedAccuracy < 0 || location.speedAccuracy <= 2.5
+            let speedAccOK = location.speedAccuracy < 0 || location.speedAccuracy <= 1.6
             if speedAccOK {
-                candidates.append(max(0, location.speed))
+                gpsSpeed = max(0, location.speed)
             } else if location.speed < rawStillMps {
-                candidates.append(0)
+                gpsSpeed = 0
             }
         }
 
-        // 2) Prędkość z delty pozycji (tylko przy sensownym dt)
+        var derivedSpeed: Double?
         if let prev = lastLocationForDelta {
             let dt = location.timestamp.timeIntervalSince(prev.timestamp)
-            if dt > 0.35, dt < 4.0 {
+            if dt > 0.5, dt < 3.5 {
                 let dist = location.distance(from: prev)
-                // Odrzuć skoki GPS
-                if dist < 80 {
+                // Mały dystans w krótkim czasie = szum, nie jazda
+                if dist < 1.8 {
+                    derivedSpeed = 0
+                } else if dist < 60 {
                     let derived = dist / dt
-                    // Przy krótkim dystansie i „wysokiej” prędkości — to szum
-                    if dist < 2.5, derived > 1.5 {
-                        candidates.append(0)
-                    } else {
-                        candidates.append(derived)
+                    // Przy słabej dokładności nie ufaj delcie
+                    if location.horizontalAccuracy <= 25, derived < 25 {
+                        derivedSpeed = derived
                     }
                 }
             }
         }
 
+        // Gdy GPS mówi ~0 — wierzymy GPS (nie podbijaj delcie pozycji)
+        if let gps = gpsSpeed, gps < rawStillMps {
+            return 0
+        }
+
+        var candidates: [Double] = []
+        if let gps = gpsSpeed { candidates.append(gps) }
+        if let derived = derivedSpeed { candidates.append(derived) }
         guard !candidates.isEmpty else { return 0 }
 
-        // Bierz niższą z wiarygodnych — mniej fałszywych „11 km/h” przy staniu/spacerze
+        // Najniższa wiarygodna — unika fałszywych km/h przy postoju
         let chosen = candidates.min() ?? 0
         if chosen < rawStillMps { return 0 }
         return chosen

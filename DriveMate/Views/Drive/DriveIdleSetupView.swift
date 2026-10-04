@@ -233,18 +233,13 @@ struct DriveIdleSetupView: View {
                 .frame(maxWidth: 480)
                 .animation(.easeOut(duration: 0.2), value: assistant.transcript)
 
-            HStack(spacing: 16) {
-                DictaphoneCircleButton(isActive: true) {
-                    assistant.toggleListening()
-                }
-
-                Button("Anuluj") {
-                    assistant.dismissAvatar()
-                    exitVoiceMode()
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.55))
+            Button("Anuluj") {
+                assistant.dismissAvatar()
+                exitVoiceMode()
             }
+            .font(.system(size: 17, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.7))
+            .buttonStyle(.plain)
 
             Spacer(minLength: 0)
         }

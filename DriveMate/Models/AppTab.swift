@@ -9,7 +9,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .drive: "DRIVE"
+        case .drive: "DRIVE MATE"
         case .recorder: "RECORDER"
         case .settings: "SETTINGS"
         }
