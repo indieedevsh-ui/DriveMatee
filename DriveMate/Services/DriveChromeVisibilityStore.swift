@@ -24,8 +24,7 @@ enum DriveChromeTile: String, CaseIterable, Identifiable, Codable {
 
     /// Dopasowanie z komendy głosowej / tekstu.
     static func resolve(fromQuery query: String) -> DriveChromeTile? {
-        let q = query.lowercased()
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+        let q = DriveIntentQueryHelpers.foldForMatching(query)
 
         if q.contains("predkosciomierz") || q.contains("predkosc") || q.contains("speed")
             || q.contains("km/h") || q.contains("kmh") || q.contains("speedo") {

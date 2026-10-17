@@ -315,8 +315,7 @@ final class DriveMateMemoryStore: ObservableObject {
     }
 
     static func normalizeWake(_ text: String) -> String {
-        text.lowercased()
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+        DriveIntentQueryHelpers.foldForMatching(text)
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: ".", with: " ")
@@ -333,6 +332,11 @@ final class DriveMateMemoryStore: ObservableObject {
     }
 
     // MARK: - Geometry helpers
+
+    /// Odległość GPS od polilinii trasy (do auto-reroute / uczenia zjazdów).
+    static func distanceToRoutePolyline(_ coordinate: CLLocationCoordinate2D, route: MKRoute) -> CLLocationDistance {
+        distanceToRoute(coordinate, route: route)
+    }
 
     private static func distanceToRoute(_ coordinate: CLLocationCoordinate2D, route: MKRoute) -> CLLocationDistance {
         let poly = route.polyline

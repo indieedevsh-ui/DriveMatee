@@ -589,6 +589,9 @@ private struct TripSummaryCarFlagView: View {
 
 struct EndRouteButton: View {
     var action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isLight: Bool { colorScheme == .light }
 
     var body: some View {
         Button {
@@ -597,26 +600,36 @@ struct EndRouteButton: View {
         } label: {
             Text("Zakończ trasę")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(isLight ? Color.black : Color.white)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .liquidGlassCapsule(.clear.interactive())
+                .background {
+                    Capsule()
+                        .fill(Color.black.opacity(isLight ? 0.14 : 0))
+                        .liquidGlassCapsule(.clear.interactive())
+                }
                 .overlay {
                     Capsule()
                         .stroke(
                             LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.45),
-                                    Color.red.opacity(0.35),
-                                    Color.white.opacity(0.2)
-                                ],
+                                colors: isLight
+                                    ? [
+                                        Color.black.opacity(0.35),
+                                        Color.red.opacity(0.4),
+                                        Color.black.opacity(0.18)
+                                    ]
+                                    : [
+                                        Color.white.opacity(0.45),
+                                        Color.red.opacity(0.35),
+                                        Color.white.opacity(0.2)
+                                    ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1
                         )
                 }
-                .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                .shadow(color: .black.opacity(isLight ? 0.18 : 0.35), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Zakończ trasę")

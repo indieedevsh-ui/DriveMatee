@@ -3,8 +3,7 @@ import Foundation
 /// Szacunek spalania (l/100 km) na podstawie modelu auta.
 enum CarFuelEstimator {
     static func litersPer100km(forModel model: String) -> Double {
-        let m = model.lowercased()
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+        let m = DriveIntentQueryHelpers.foldForMatching(model)
 
         // Hybrydy / EV-ish
         if m.contains("hybrid") || m.contains("hybryda") || m.contains("prius") { return 4.5 }

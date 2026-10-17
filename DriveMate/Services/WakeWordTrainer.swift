@@ -316,8 +316,7 @@ final class WakeWordTrainer: NSObject, ObservableObject {
     }
 
     private static func looksLikeWake(_ text: String) -> Bool {
-        let n = text.lowercased()
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+        let n = DriveIntentQueryHelpers.foldForMatching(text)
         let keys = [
             "hey drive", "hej drive", "hei drive", "hey drajw", "hej drajw",
             "drive mate", "drajw", "drive", "hey", "hej"

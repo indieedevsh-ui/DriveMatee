@@ -132,11 +132,26 @@ final class PolishSpeechRecognizer: NSObject, ObservableObject {
         } else {
             // Bias słownika pod naturalne komendy kierowcy (ASR przy szumie).
             req.contextualStrings = [
+                // Paliwo — najczęstsze pytanie, do tego wiele parafraz.
                 "zużycie paliwa", "ile spalę", "koszt paliwa", "koszt trasy", "spalanie",
-                "najbliższa restauracja", "jestem głodny", "gdzie zjeść", "restauracja",
-                "stacja paliw", "zatankować", "najbliższa stacja",
+                "ile mam paliwa", "poziom paliwa", "stan paliwa", "ile litrów",
+                "na ile wystarczy", "jaki zasięg", "jak daleko dojadę", "dowieziesz mnie",
+                "czy wystarczy paliwa", "czy muszę zatankować", "poziomu paliwa",
+                "stacja paliw", "najbliższa stacja", "zatankować", "gdzie zatankować",
+                "najtańsza stacja", "tankowanie",
+                // Ulica / miejsce
+                "gdzie jestem", "jaki jest mój adres", "co to za ulica", "na jakiej ulicy",
+                "informacje o ulicy", "historia ulicy", "ciekawostka o ulicy",
+                "jaka ulica tu jest", "co tutaj jest", "kod pocztowy",
+                // Nawigacja, jedzenie, auto
                 "moja lokalizacja", "z mojej lokalizacji", "jedź do", "nawigacja",
-                "przywróć trasę", "anuluj trasę", "następny utwór", "pauza",
+                "jak dojechać", "zaprowadź mnie", "trasa do",
+                "najbliższa restauracja", "jestem głodny", "gdzie zjeść", "restauracja",
+                "sprawdź korki", "jakie są korki", "ograniczenie prędkości",
+                "moje auto to", "spalanie auta",
+                // Sterowanie
+                "przywróć trasę", "anuluj trasę", "następny utwór", "poprzedni utwór", "pauza",
+                "przestań słuchać", "ukryj prędkościomierz", "pokaż zegar",
                 "Hey Drive", "Drive Mate"
             ]
         }

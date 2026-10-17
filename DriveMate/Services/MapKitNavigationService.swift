@@ -43,12 +43,30 @@ struct TurnManeuver: Identifiable, Equatable {
 }
 
 struct NextTurnGuidance: Equatable {
+    /// Kafelek skrętu widoczny dopiero od tej odległości (dalej — przycisk oczu Drive Mate).
+    static let tileVisibleWithinMeters: CLLocationDistance = 350
+    /// W trybie AR — symbol skrętu na środku kamery od tej odległości.
+    static let arApproachWithinMeters: CLLocationDistance = 100
+    /// Próg „jesteś na skrzyżowaniu” — przypomnienie AR na 5 s.
+    static let arIntersectionWithinMeters: CLLocationDistance = 40
+
     let maneuverID: UUID
     let direction: TurnDirection
     let distanceMeters: CLLocationDistance
     let instruction: String
 
     var isImminent: Bool { distanceMeters <= 50 }
+
+    /// Czy pokazać kafelek zamiast przycisku Drive Mate.
+    var showsTurnTile: Bool { distanceMeters <= Self.tileVisibleWithinMeters }
+
+    var showsARApproachSymbol: Bool {
+        distanceMeters <= Self.arApproachWithinMeters && direction != .straight
+    }
+
+    var isAtIntersectionForAR: Bool {
+        distanceMeters <= Self.arIntersectionWithinMeters && direction != .straight
+    }
 
     var distanceLabel: String {
         if isImminent { return "tutaj" }
@@ -130,12 +148,20 @@ final class NavigationMapState: ObservableObject {
     @Published var destinationFlagBounceToken: Int = 0
     /// Inkrementowane gdy trzeba wystartować rysowanie linii (mapa musi być gotowa).
     @Published private(set) var routeRevealRequestID: Int = 0
+    /// Inkrementowane przy każdym „wyśrodkuj” — mapa zawsze reaguje, nawet gdy focus już był `.follow`.
+    @Published private(set) var recenterRequestID: Int = 0
 
     private var announcedManeuverIDs: Set<UUID> = []
+    /// Zapowiedź „za X metrów” (wcześniejsza niż imminent).
+    private var approachAnnouncedIDs: Set<UUID> = []
     private var passedManeuverIDs: Set<UUID> = []
     private var routeRevealTask: Task<Void, Never>?
     /// Czekamy na MapDriveView — animacja nie może lecieć „w próżnię”.
     private var routeRevealAwaitingMap = false
+    /// Blokada auto-przeliczania trasy (żeby nie spamować MapKit).
+    private var lastRerouteAt: Date?
+    private var offRouteTicksForReroute = 0
+    private var rerouteTask: Task<Void, Never>?
 
     // Trip stats
     private var tripStartedAt: Date?
@@ -167,13 +193,20 @@ final class NavigationMapState: ObservableObject {
         routeRevealCameraCoordinate = nil
         destinationFlagVisible = false
         announcedManeuverIDs.removeAll()
+        approachAnnouncedIDs.removeAll()
         passedManeuverIDs.removeAll()
+        lastRerouteAt = nil
+        offRouteTicksForReroute = 0
+        rerouteTask?.cancel()
+        rerouteTask = nil
         resetTripTracking()
     }
 
     /// Kończy trasę i zwraca podsumowanie (czas, dystans, średnia prędkość).
     func endTripAndSummarize() -> TripSummary {
         let summary = makeTripSummary()
+        // Spalenie z trasy zmniejsza poziom w baku — zasięg ma być prawdziwy.
+        FuelProfile.shared.consume(distanceMeters: summary.distanceMeters)
         clearNavigation()
         return summary
     }
@@ -226,7 +259,9 @@ final class NavigationMapState: ObservableObject {
         coordinate: CLLocationCoordinate2D,
         title: String,
         route: MKRoute?,
-        alternates: [MKRoute]
+        alternates: [MKRoute],
+        animateReveal: Bool = true,
+        resetTripStats: Bool = true
     ) {
         routeRevealTask?.cancel()
         destinationCoordinate = coordinate
@@ -238,6 +273,7 @@ final class NavigationMapState: ObservableObject {
         nextTurnGuidance = nil
         turnAnnouncement = nil
         announcedManeuverIDs.removeAll()
+        approachAnnouncedIDs.removeAll()
         passedManeuverIDs.removeAll()
         isNavigating = route != nil
         animateDestinationPulse = true
@@ -245,22 +281,34 @@ final class NavigationMapState: ObservableObject {
         showRecenterButton = false
 
         if route != nil {
-            beginTripTracking()
-            isFollowingUser = false
-            isAnimatingRouteReveal = true
-            destinationFlagVisible = false
-            routeDrawProgress = 0
-            // Start kamery na początku trasy
-            if let poly = route?.polyline,
-               let start = RouteGeometry.coordinate(along: poly, progress: 0) {
-                routeRevealCameraCoordinate = start
-            } else {
-                routeRevealCameraCoordinate = nil
+            if resetTripStats {
+                beginTripTracking()
             }
-            cameraFocus = .follow
-            // Start animacji dopiero gdy mapa nawigacji jest na ekranie.
-            routeRevealAwaitingMap = true
-            routeRevealRequestID &+= 1
+            if animateReveal {
+                isFollowingUser = false
+                isAnimatingRouteReveal = true
+                destinationFlagVisible = false
+                routeDrawProgress = 0
+                if let poly = route?.polyline,
+                   let start = RouteGeometry.coordinate(along: poly, progress: 0) {
+                    routeRevealCameraCoordinate = start
+                } else {
+                    routeRevealCameraCoordinate = nil
+                }
+                cameraFocus = .follow
+                routeRevealAwaitingMap = true
+                routeRevealRequestID &+= 1
+            } else {
+                // Ciche przeliczenie trasy — od razu follow, bez rysowania linii.
+                isFollowingUser = true
+                isAnimatingRouteReveal = false
+                destinationFlagVisible = true
+                routeDrawProgress = 1
+                routeRevealCameraCoordinate = nil
+                routeRevealAwaitingMap = false
+                cameraFocus = .follow
+                recenterRequestID &+= 1
+            }
         } else {
             isFollowingUser = true
             isAnimatingRouteReveal = false
@@ -341,12 +389,29 @@ final class NavigationMapState: ObservableObject {
     }
 
     func recenterOnUser() {
+        // Przerwij intro rysowania trasy — inaczej kamera zostaje na czubku linii.
+        if isAnimatingRouteReveal {
+            routeRevealTask?.cancel()
+            routeRevealTask = nil
+            routeRevealAwaitingMap = false
+            isAnimatingRouteReveal = false
+            routeDrawProgress = 1
+            destinationFlagVisible = true
+            routeRevealCameraCoordinate = nil
+        }
+
         isFollowingUser = true
         withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
             showRecenterButton = false
         }
+        // Osobny token — MapDriveView zawsze snapuje, nawet gdy focus już był `.follow`.
+        // (Głos i przycisk idą tą samą ścieżką.)
+        recenterRequestID &+= 1
         cameraFocus = .user
-        cameraFocus = .follow
+        if isNavigating {
+            cameraFocus = .follow
+        }
+        objectWillChange.send()
     }
 
     func consumeTurnAnnouncement() {
@@ -363,7 +428,8 @@ final class NavigationMapState: ObservableObject {
 
         for m in turnManeuvers where !passedManeuverIDs.contains(m.id) {
             let d = user.distance(from: CLLocation(latitude: m.coordinate.latitude, longitude: m.coordinate.longitude))
-            if d < 25 {
+            // Później oznaczaj jako minięty — wcześniej gubiło zapowiedź głosową.
+            if d < 18 {
                 passedManeuverIDs.insert(m.id)
             }
         }
@@ -377,22 +443,84 @@ final class NavigationMapState: ObservableObject {
         let distance = user.distance(
             from: CLLocation(latitude: next.coordinate.latitude, longitude: next.coordinate.longitude)
         )
-        let guidance = NextTurnGuidance(
-            maneuverID: next.id,
-            direction: next.direction,
-            distanceMeters: distance,
-            instruction: next.instruction
-        )
-        nextTurnGuidance = guidance
         nextTurnBanner = next.instruction
 
-        if guidance.isImminent, !announcedManeuverIDs.contains(next.id) {
+        // Kafelek tylko blisko manewru — dalej wraca przycisk oczu Drive Mate.
+        if distance <= NextTurnGuidance.tileVisibleWithinMeters {
+            nextTurnGuidance = NextTurnGuidance(
+                maneuverID: next.id,
+                direction: next.direction,
+                distanceMeters: distance,
+                instruction: next.instruction
+            )
+        } else {
+            nextTurnGuidance = nil
+        }
+
+        // Głos: wcześniej (≈180 m) + przypomnienie na skrzyżowaniu (≤50 m).
+        let turnDirs: Set<TurnDirection> = [.left, .right]
+        if turnDirs.contains(next.direction) {
+            if distance <= 180, distance > 55, !approachAnnouncedIDs.contains(next.id) {
+                approachAnnouncedIDs.insert(next.id)
+                let meters = Int((distance / 10).rounded() * 10)
+                turnAnnouncement = "Za \(max(meters, 60)) metrów skręć \(next.direction.spoken)."
+            } else if distance <= 55, !announcedManeuverIDs.contains(next.id) {
+                announcedManeuverIDs.insert(next.id)
+                approachAnnouncedIDs.insert(next.id)
+                turnAnnouncement = "Skręć \(next.direction.spoken)."
+            }
+        } else if next.direction == .straight, distance <= 55, !announcedManeuverIDs.contains(next.id) {
             announcedManeuverIDs.insert(next.id)
-            switch next.direction {
-            case .straight:
-                turnAnnouncement = "Na najbliższym skrzyżowaniu jedź prosto."
-            case .left, .right:
-                turnAnnouncement = "Na najbliższym skrzyżowaniu skręć \(next.direction.spoken)."
+            turnAnnouncement = "Na najbliższym skrzyżowaniu jedź prosto."
+        }
+    }
+
+    /// Auto-przelicz trasę, gdy kierowca zjedzie z polilinii (bez animacji rysowania).
+    func considerAutoReroute(userCoordinate: CLLocationCoordinate2D?) {
+        guard isNavigating,
+              !isAnimatingRouteReveal,
+              let userCoordinate,
+              let route,
+              let dest = destinationCoordinate,
+              let title = destinationTitle else {
+            offRouteTicksForReroute = 0
+            return
+        }
+
+        let dist = DriveMateMemoryStore.distanceToRoutePolyline(userCoordinate, route: route)
+        if dist > 70 {
+            offRouteTicksForReroute += 1
+        } else {
+            offRouteTicksForReroute = 0
+            return
+        }
+
+        guard offRouteTicksForReroute >= 5 else { return }
+        if let last = lastRerouteAt, Date().timeIntervalSince(last) < 12 { return }
+        guard rerouteTask == nil else { return }
+
+        lastRerouteAt = Date()
+        offRouteTicksForReroute = 0
+        let lat = userCoordinate.latitude
+        let lon = userCoordinate.longitude
+        let destLat = dest.latitude
+        let destLon = dest.longitude
+        let destTitle = title
+
+        rerouteTask = Task { @MainActor in
+            defer { rerouteTask = nil }
+            do {
+                _ = try await MapKitNavigationService.shared.planBestRoute(
+                    toLatitude: destLat,
+                    toLongitude: destLon,
+                    destinationName: destTitle,
+                    fromLatitude: lat,
+                    fromLongitude: lon,
+                    animateReveal: false,
+                    resetTripStats: false
+                )
+            } catch {
+                // Ciche niepowodzenie — spróbujemy przy kolejnym zjeździe.
             }
         }
     }
@@ -400,35 +528,54 @@ final class NavigationMapState: ObservableObject {
     private static func buildManeuvers(from route: MKRoute?) -> [TurnManeuver] {
         guard let route else { return [] }
         var result: [TurnManeuver] = []
+        var previousPoints: [CLLocationCoordinate2D] = []
+
         for step in route.steps {
-            let text = step.instructions.lowercased()
-            let direction = classifyDirection(text)
-            let isTurn = direction == .left || direction == .right
-                || text.contains("skręć") || text.contains("skrec")
-                || text.contains("turn") || text.contains("zjedź") || text.contains("zjazd")
-            guard isTurn, step.distance > 5 else { continue }
+            let rawText = step.instructions
+            let text = normalizeInstruction(rawText)
 
             let line = step.polyline
-            guard line.pointCount > 0 else { continue }
+            guard line.pointCount > 0 else {
+                previousPoints = []
+                continue
+            }
             var points = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: line.pointCount)
             line.getCoordinates(&points, range: NSRange(location: 0, length: line.pointCount))
-            guard let first = points.first else { continue }
-
-            var heading: CLLocationDirection = 0
-            if points.count >= 2 {
-                heading = bearing(from: points[0], to: points[min(1, points.count - 1)])
+            guard let first = points.first else {
+                previousPoints = []
+                continue
             }
+
+            // Kąt skrętu jak na mapie: dojazd (koniec poprzedniego kroku) → wyjazd (początek tego).
+            let incoming = bearingAlong(points: previousPoints, fromEnd: true, meters: 35)
+                ?? bearingAlong(points: previousPoints, fromEnd: true, meters: 12)
+            let outgoing = bearingAlong(points: points, fromEnd: false, meters: 35)
+                ?? bearingAlong(points: points, fromEnd: false, meters: 12)
+            let startHeading = outgoing
+                ?? (points.count >= 2 ? bearing(from: points[0], to: points[min(1, points.count - 1)]) : 0)
+
+            let direction = classifyDirection(
+                text,
+                incomingBearing: incoming,
+                outgoingBearing: outgoing
+            )
+
+            let looksLikeTurn = direction == .left || direction == .right
+                || text.contains("skrec") || text.contains("turn")
+                || text.contains("zjedz") || text.contains("zjazd")
+                || text.contains("rondo")
+            defer { previousPoints = points }
+
+            guard looksLikeTurn, step.distance > 5 else { continue }
+            guard direction == .left || direction == .right else { continue }
 
             result.append(
                 TurnManeuver(
                     id: UUID(),
                     coordinate: first,
-                    heading: heading,
-                    instruction: step.instructions,
-                    direction: direction == .straight
-                        ? (text.contains("lewo") || text.contains("left") ? .left
-                           : text.contains("prawo") || text.contains("right") ? .right : .straight)
-                        : direction,
+                    heading: startHeading,
+                    instruction: rawText,
+                    direction: direction,
                     stepDistance: step.distance
                 )
             )
@@ -436,13 +583,126 @@ final class NavigationMapState: ObservableObject {
         return result
     }
 
-    private static func classifyDirection(_ text: String) -> TurnDirection {
-        if text.contains("lewo") || text.contains("left") { return .left }
-        if text.contains("prawo") || text.contains("right") { return .right }
+    /// Geometria trasy wygrywa przy wyraźnym skręcie (to widać na mapie);
+    /// tekst MapKit tylko gdy kąt jest niejednoznaczny.
+    private static func classifyDirection(
+        _ text: String,
+        incomingBearing: CLLocationDirection?,
+        outgoingBearing: CLLocationDirection?
+    ) -> TurnDirection {
+        let fromText = classifyDirectionFromText(text)
+        let fromGeometry: TurnDirection? = {
+            guard let incoming = incomingBearing, let outgoing = outgoingBearing else { return nil }
+            let delta = signedHeadingDelta(from: incoming, to: outgoing)
+            // Dodatni delta = heading rośnie zgodnie z zegarem = skręt w prawo.
+            if abs(delta) >= 25 {
+                return delta > 0 ? .right : .left
+            }
+            if abs(delta) < 12 {
+                return .straight
+            }
+            return nil
+        }()
+
+        if let geo = fromGeometry, geo == .left || geo == .right {
+            // Przy konflikcie tekst↔mapa zaufaj geometrii (kafelek = to co widać na trasie).
+            if let textDir = fromText, textDir != geo, textDir != .straight {
+                return geo
+            }
+            return geo
+        }
+        if let textDir = fromText {
+            return textDir
+        }
         if text.contains("prosto") || text.contains("straight") || text.contains("kontynuuj") {
             return .straight
         }
         return .straight
+    }
+
+    private static func normalizeInstruction(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .replacingOccurrences(of: "\u{202f}", with: " ")
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+            .replacingOccurrences(of: "ł", with: "l")
+            .replacingOccurrences(of: "Ł", with: "l")
+    }
+
+    private static func classifyDirectionFromText(_ text: String) -> TurnDirection? {
+        // text już znormalizowany (bez diakrytyków)
+        let cues: [(String, TurnDirection)] = [
+            ("skrec w prawo", .right), ("skrec w lewo", .left),
+            ("zjedz w prawo", .right), ("zjedz w lewo", .left),
+            ("turn right", .right), ("turn left", .left),
+            ("keep right", .right), ("keep left", .left),
+            ("bear right", .right), ("bear left", .left),
+            ("trzymaj sie prawej", .right), ("trzymaj sie lewej", .left),
+            ("na prawo", .right), ("na lewo", .left),
+            (" w prawo", .right), (" w lewo", .left)
+        ]
+        var bestIndex = -1
+        var bestDirection: TurnDirection?
+        for (phrase, direction) in cues {
+            var searchStart = text.startIndex
+            while let range = text.range(of: phrase, range: searchStart..<text.endIndex) {
+                let idx = text.distance(from: text.startIndex, to: range.lowerBound)
+                if idx >= bestIndex {
+                    bestIndex = idx
+                    bestDirection = direction
+                }
+                searchStart = range.upperBound
+            }
+        }
+        return bestDirection
+    }
+
+    /// Heading po ~`meters` metrach od początku (lub końca) polilinii kroku.
+    private static func bearingAlong(
+        points: [CLLocationCoordinate2D],
+        fromEnd: Bool,
+        meters: CLLocationDistance
+    ) -> CLLocationDirection? {
+        guard points.count >= 2 else { return nil }
+        if fromEnd {
+            var remaining = meters
+            var idx = points.count - 1
+            while idx > 0 {
+                let a = points[idx - 1]
+                let b = points[idx]
+                let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                    .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+                if seg >= remaining || idx == 1 {
+                    return bearing(from: a, to: b)
+                }
+                remaining -= seg
+                idx -= 1
+            }
+            return bearing(from: points[points.count - 2], to: points[points.count - 1])
+        }
+
+        var remaining = meters
+        var idx = 0
+        while idx < points.count - 1 {
+            let a = points[idx]
+            let b = points[idx + 1]
+            let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+            if seg >= remaining || idx == points.count - 2 {
+                return bearing(from: a, to: b)
+            }
+            remaining -= seg
+            idx += 1
+        }
+        return bearing(from: points[0], to: points[1])
+    }
+
+    /// Znormalizowana różnica headingów w (−180, 180]; dodatnia = w prawo.
+    private static func signedHeadingDelta(from: CLLocationDirection, to: CLLocationDirection) -> Double {
+        var d = to - from
+        while d > 180 { d -= 360 }
+        while d <= -180 { d += 360 }
+        return d
     }
 
     private static func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDirection {
@@ -514,6 +774,66 @@ final class MapKitNavigationService {
             )
         }
         return Array(places)
+    }
+
+    /// Najbliższy sklep / sieć (Żabka, Lewiatan, Empik…).
+    func findNearestStore(
+        query: String,
+        near coordinate: CLLocationCoordinate2D
+    ) async throws -> (place: PlaceResult, mapItem: MKMapItem)? {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.resultTypes = [.pointOfInterest]
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: [
+            .store, .pharmacy, .bakery, .foodMarket, .cafe
+        ])
+        request.region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 12_000,
+            longitudinalMeters: 12_000
+        )
+        let response = try await MKLocalSearch(request: request).start()
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let q = query.lowercased()
+        let ranked = response.mapItems.compactMap { item -> (PlaceResult, MKMapItem, CLLocationDistance, Int)? in
+            guard let place = Self.mapItemToPlace(item, fallbackName: query) else { return nil }
+            let d = origin.distance(
+                from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+            )
+            let name = (item.name ?? "").lowercased()
+            // Preferuj trafienia z nazwą marki w tytule.
+            let nameBonus = name.contains(q) || q.split(separator: " ").contains(where: { name.contains($0) })
+                ? 0 : 1
+            return (place, item, d, nameBonus)
+        }
+        .sorted {
+            if $0.3 != $1.3 { return $0.3 < $1.3 }
+            return $0.2 < $1.2
+        }
+
+        guard let best = ranked.first else {
+            // Fallback bez filtra POI — czasem sieci są skategoryzowane inaczej.
+            let loose = MKLocalSearch.Request()
+            loose.naturalLanguageQuery = query
+            loose.resultTypes = [.pointOfInterest, .address]
+            loose.region = MKCoordinateRegion(
+                center: coordinate,
+                latitudinalMeters: 15_000,
+                longitudinalMeters: 15_000
+            )
+            let looseResponse = try await MKLocalSearch(request: loose).start()
+            let looseRanked = looseResponse.mapItems.compactMap { item -> (PlaceResult, MKMapItem, CLLocationDistance)? in
+                guard let place = Self.mapItemToPlace(item, fallbackName: query) else { return nil }
+                let d = origin.distance(
+                    from: CLLocation(latitude: place.latitude, longitude: place.longitude)
+                )
+                return (place, item, d)
+            }
+            .sorted { $0.2 < $1.2 }
+            guard let hit = looseRanked.first else { return nil }
+            return (hit.0, hit.1)
+        }
+        return (best.0, best.1)
     }
 
     /// Najbliższa restauracja (Apple Maps POI).
@@ -633,7 +953,9 @@ final class MapKitNavigationService {
         toLongitude: Double,
         destinationName: String,
         fromLatitude: Double? = nil,
-        fromLongitude: Double? = nil
+        fromLongitude: Double? = nil,
+        animateReveal: Bool = true,
+        resetTripStats: Bool = true
     ) async throws -> (best: RouteResult, alternates: [RouteResult]) {
         guard NavigationEULA.isAccepted else {
             throw NavigationError.disclaimerRequired
@@ -715,7 +1037,9 @@ final class MapKitNavigationService {
             coordinate: destCoord,
             title: destinationName,
             route: best,
-            alternates: []
+            alternates: [],
+            animateReveal: animateReveal,
+            resetTripStats: resetTripStats
         )
 
         let bestResult = mappedRoutes.first(where: {
@@ -912,6 +1236,44 @@ enum RouteGeometry {
         let sample = point(along: coords, progress: min(max(progress, 0), 1))
         let lookAhead = point(along: coords, progress: min(max(progress + 0.02, 0), 1))
         return bearing(from: sample.coordinate, to: lookAhead.coordinate)
+    }
+
+    /// Pozostałe metry wzdłuż polyline od najbliższego punktu do użytkownika aż do końca trasy.
+    static func remainingDistanceMeters(
+        along polyline: MKPolyline?,
+        from userCoordinate: CLLocationCoordinate2D?
+    ) -> CLLocationDistance? {
+        guard let polyline, polyline.pointCount > 1, let userCoordinate else { return nil }
+        var coords = [CLLocationCoordinate2D](
+            repeating: kCLLocationCoordinate2DInvalid,
+            count: polyline.pointCount
+        )
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
+        guard coords.count > 1 else { return nil }
+
+        let user = CLLocation(latitude: userCoordinate.latitude, longitude: userCoordinate.longitude)
+        var bestIndex = 0
+        var bestDist = Double.greatestFiniteMagnitude
+        for (index, coord) in coords.enumerated() {
+            let d = user.distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude))
+            if d < bestDist {
+                bestDist = d
+                bestIndex = index
+            }
+        }
+
+        var remaining: CLLocationDistance = 0
+        if bestIndex < coords.count - 1 {
+            remaining += user.distance(
+                from: CLLocation(latitude: coords[bestIndex].latitude, longitude: coords[bestIndex].longitude)
+            )
+            for i in bestIndex..<(coords.count - 1) {
+                let a = CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
+                let b = CLLocation(latitude: coords[i + 1].latitude, longitude: coords[i + 1].longitude)
+                remaining += a.distance(from: b)
+            }
+        }
+        return max(remaining, 0)
     }
 
     private struct Sample {

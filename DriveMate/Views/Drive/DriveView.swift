@@ -9,6 +9,8 @@ struct SpeedBadge: View {
     var isSpeeding: Bool = false
     var pulseScale: CGFloat = 1
 
+    @Environment(\.colorScheme) private var colorScheme
+
     private var accent: Color {
         isSpeeding ? Color(red: 1.0, green: 0.12, blue: 0.14) : DriveMatePalette.neonGreen
     }
@@ -66,7 +68,9 @@ struct SpeedBadge: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(
-                        isSpeeding ? accent.opacity(0.85) : Color.white.opacity(0.4),
+                        isSpeeding
+                            ? accent.opacity(0.85)
+                            : (colorScheme == .light ? Color.black.opacity(0.28) : Color.white.opacity(0.4)),
                         lineWidth: isSpeeding ? 1.4 : 1
                     )
             }
@@ -78,8 +82,11 @@ struct SpeedBadge: View {
 }
 
 struct ClockBadge: View {
+    @Environment(\.colorScheme) private var colorScheme
     @State private var now = Date()
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private var isLight: Bool { colorScheme == .light }
 
     private var timeText: String {
         let f = DateFormatter()
@@ -91,17 +98,20 @@ struct ClockBadge: View {
     var body: some View {
         Text(timeText)
             .font(.system(size: 22, weight: .bold, design: .rounded))
-            .foregroundStyle(Color.white.opacity(0.95))
+            .foregroundStyle(isLight ? Color.black.opacity(0.92) : Color.white.opacity(0.95))
             .monospacedDigit()
             .padding(.horizontal, 16)
             .frame(minWidth: 96, minHeight: 64)
             .background {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.black.opacity(0.28))
+                    .fill(Color.black.opacity(isLight ? 0.16 : 0.28))
                     .liquidGlassRect(cornerRadius: 18, .clear)
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            .stroke(
+                                isLight ? Color.black.opacity(0.22) : Color.white.opacity(0.28),
+                                lineWidth: 1
+                            )
                     }
             }
             .onReceive(timer) { now = $0 }
@@ -111,49 +121,85 @@ struct ClockBadge: View {
 
 struct MusicControlsBar: View {
     @ObservedObject var player: MusicPlayerService
-    var hasTracks: Bool
+    @ObservedObject var musicSource: MusicSourceController = .shared
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isLight: Bool { colorScheme == .light }
+    private var controlsEnabled: Bool { musicSource.controlsEnabled }
+    private var playing: Bool { musicSource.isPlaying }
 
     var body: some View {
-        HStack(spacing: 0) {
-            Spacer(minLength: 0)
-            metallicButton(systemName: "backward.fill", size: 32) {
-                MechanicalClickSound.play()
-                player.previous(andPlay: player.isPlaying)
+        VStack(spacing: 8) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                metallicButton(systemName: "backward.fill", size: 32) {
+                    MechanicalClickSound.play()
+                    musicSource.uiPrevious()
+                }
+                Spacer(minLength: 0)
+                metallicButton(systemName: playing ? "pause.fill" : "play.fill", size: 40) {
+                    MechanicalClickSound.play()
+                    musicSource.uiTogglePlayPause()
+                }
+                Spacer(minLength: 0)
+                metallicButton(systemName: "forward.fill", size: 32) {
+                    MechanicalClickSound.play()
+                    musicSource.uiNext()
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            metallicButton(systemName: player.isPlaying ? "pause.fill" : "play.fill", size: 40) {
-                MechanicalClickSound.play()
-                player.togglePlayPause()
+
+            if let message = musicSource.panelMessage, !message.isEmpty {
+                Text(message)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isLight ? Color.black.opacity(0.7) : Color.white.opacity(0.75))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+                    .onAppear {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 4_000_000_000)
+                            musicSource.dismissPanelMessage()
+                        }
+                    }
             }
-            Spacer(minLength: 0)
-            metallicButton(systemName: "forward.fill", size: 32) {
-                MechanicalClickSound.play()
-                player.next(andPlay: player.isPlaying)
-            }
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 36)
         .padding(.vertical, 20)
         .frame(maxWidth: 480)
         .frame(minHeight: 96)
-        .liquidGlassRect(cornerRadius: 30, .clear.interactive())
+        .background {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(Color.black.opacity(isLight ? 0.14 : 0))
+                .liquidGlassRect(cornerRadius: 30, .clear.interactive())
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.55),
-                            Color.white.opacity(0.12),
-                            Color.white.opacity(0.3)
-                        ],
+                        colors: isLight
+                            ? [
+                                Color.black.opacity(0.35),
+                                Color.black.opacity(0.12),
+                                Color.black.opacity(0.22)
+                            ]
+                            : [
+                                Color.white.opacity(0.55),
+                                Color.white.opacity(0.12),
+                                Color.white.opacity(0.3)
+                            ],
                         startPoint: .top,
                         endPoint: .bottom
                     ),
                     lineWidth: 1
                 )
         }
-        .shadow(color: .black.opacity(0.28), radius: 14, y: 6)
-        .opacity(hasTracks ? 1 : 0.75)
+        .shadow(color: .black.opacity(isLight ? 0.18 : 0.28), radius: 14, y: 6)
+        .opacity(controlsEnabled ? 1 : 0.75)
+        .onAppear { musicSource.syncPlayingState() }
+        // `player` obserwowany, żeby lokalne isPlaying odświeżało pasek.
+        .onChange(of: player.isPlaying) { _, _ in
+            musicSource.syncPlayingState()
+        }
     }
 
     private func metallicButton(systemName: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -162,22 +208,27 @@ struct MusicControlsBar: View {
                 .font(.system(size: size, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [.white, Color(white: 0.78), Color(white: 0.55)],
+                        colors: isLight
+                            ? [Color.black, Color(white: 0.22), Color(white: 0.4)]
+                            : [.white, Color(white: 0.78), Color(white: 0.55)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
-                .shadow(color: .black.opacity(0.45), radius: 2, y: 2)
+                .shadow(color: .black.opacity(isLight ? 0.15 : 0.45), radius: 2, y: 2)
                 .frame(width: 68, height: 68)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!hasTracks)
+        .disabled(!controlsEnabled)
     }
 }
 
 struct RecenterNavButton: View {
     var action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isLight: Bool { colorScheme == .light }
 
     var body: some View {
         Button(action: action) {
@@ -185,18 +236,34 @@ struct RecenterNavButton: View {
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [
-                            Color(red: 0.75, green: 0.94, blue: 1.0),
-                            Color(red: 0.25, green: 0.7, blue: 1.0)
-                        ],
+                        colors: isLight
+                            ? [Color.black.opacity(0.9), Color(white: 0.25)]
+                            : [
+                                Color(red: 0.75, green: 0.94, blue: 1.0),
+                                Color(red: 0.25, green: 0.7, blue: 1.0)
+                            ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
                 )
                 .frame(width: 44, height: 44)
-                .liquidGlassCircle(.clear.interactive())
-                .overlay { Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.9) }
-                .shadow(color: Color(red: 0.3, green: 0.8, blue: 1).opacity(0.35), radius: 8)
+                .background {
+                    Circle()
+                        .fill(Color.black.opacity(isLight ? 0.14 : 0))
+                        .liquidGlassCircle(.clear.interactive())
+                }
+                .overlay {
+                    Circle().stroke(
+                        isLight ? Color.black.opacity(0.25) : Color.white.opacity(0.3),
+                        lineWidth: 0.9
+                    )
+                }
+                .shadow(
+                    color: isLight
+                        ? Color.black.opacity(0.15)
+                        : Color(red: 0.3, green: 0.8, blue: 1).opacity(0.35),
+                    radius: 8
+                )
         }
         .buttonStyle(.plain)
         .transition(
@@ -246,9 +313,17 @@ struct DriveView: View {
     @State private var speedPulseScale: CGFloat = 1
     @State private var lastSpeedWarningAt: Date?
     @State private var speedPulseTask: Task<Void, Never>?
+    /// Tryb AR: tylna kamera zamiast mapy 2D.
+    @State private var isARMode = false
+    /// Przypomnienie skrętu na skrzyżowaniu (AR) — znika po 5 s.
+    @State private var arIntersectionReminder: TurnDirection?
+    @State private var arReminderShownFor: Set<UUID> = []
+    @State private var arReminderTask: Task<Void, Never>?
     @ObservedObject private var mapCompliance = MapComplianceStore.shared
     @ObservedObject private var restaurantOffer = RestaurantOfferService.shared
+    @ObservedObject private var storeOffer = StoreOfferService.shared
     @ObservedObject private var gasOffer = GasStationOfferService.shared
+    @ObservedObject private var arrivalConfirm = ArrivalConfirmService.shared
     @ObservedObject private var infoCard = DriveInfoCardStore.shared
     @ObservedObject private var chromeVisibility = DriveChromeVisibilityStore.shared
 
@@ -299,16 +374,29 @@ struct DriveView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .zIndex(30)
             } else if isNavigating {
-                MapDriveView(
-                    location: location,
-                    mapState: mapState,
-                    isDark: isDark,
-                    musicBarVisible: isMusicBarVisible,
-                    leadingChrome: leadingChrome,
-                    onUserInteraction: { revealMusicBar() }
-                )
-                .ignoresSafeArea()
-                .transition(.opacity)
+                ZStack {
+                    if isARMode {
+                        DriveARNavView(
+                            camera: camera,
+                            guidance: mapState.nextTurnGuidance,
+                            intersectionReminder: arIntersectionReminder,
+                            leadingChrome: leadingChrome
+                        )
+                        .transition(.opacity)
+                    } else {
+                        MapDriveView(
+                            location: location,
+                            mapState: mapState,
+                            isDark: isDark,
+                            musicBarVisible: isMusicBarVisible,
+                            leadingChrome: leadingChrome,
+                            onUserInteraction: { revealMusicBar() }
+                        )
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.35), value: isARMode)
             } else {
                 DriveIdleSetupView(
                     location: location,
@@ -404,19 +492,34 @@ struct DriveView: View {
                 .allowsHitTesting(true)
             }
 
+            // Przycisk oczu / kafelek skrętu — tylko podczas nawigacji (prawy górny róg).
             if isNavigating, !showingTripEnd {
                 navigatingChrome
-            } else if !showingTripEnd, !idleVoiceMode {
-                VStack {
-                    HStack {
-                        Spacer()
-                        DriveMatePanel(assistant: assistant, guidance: nil)
-                            .padding(.trailing, 36)
-                            .padding(.top, 12)
+            }
+
+            // Dojazd do celu — ukończyć trasę?
+            if arrivalConfirm.isPrompting {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .zIndex(42)
+                ArrivalConfirmPopup(
+                    destinationTitle: arrivalConfirm.destinationTitle ?? "cel",
+                    onConfirm: {
+                        arrivalConfirm.consumePromptForCompletion()
+                        endRoute()
+                        assistant.promptAndListen("Super — kończymy trasę.")
+                    },
+                    onCancel: {
+                        arrivalConfirm.dismissKeepNavigating()
+                        assistant.promptAndListen("OK, jedziemy dalej.")
                     }
-                    Spacer()
+                )
+                .padding(.leading, leadingChrome * 0.35)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                .zIndex(43)
+                .onAppear {
+                    assistant.promptAndListen(arrivalConfirm.confirmationPrompt())
                 }
-                .zIndex(18)
             }
 
             // Oferta restauracji — środek ekranu
@@ -435,6 +538,33 @@ struct DriveView: View {
                     },
                     onCancel: {
                         restaurantOffer.dismiss()
+                        mapCompliance.clear()
+                        if mapState.isNavigating {
+                            assistant.promptAndListen("Anulowano. Kontynuujemy trasę.")
+                        }
+                    }
+                )
+                .padding(.leading, leadingChrome * 0.35)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                .zIndex(41)
+            }
+
+            // Oferta sklepu
+            if storeOffer.phase == .offering || storeOffer.phase == .awaitingVoiceConfirm,
+               let offer = storeOffer.offer {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .zIndex(40)
+                StoreOfferPopup(
+                    offer: offer,
+                    onConfirm: {
+                        Task {
+                            let outcome = await storeOffer.navigateToOfferIfConfirmed()
+                            assistant.promptAndListen(outcome.reply)
+                        }
+                    },
+                    onCancel: {
+                        storeOffer.dismiss()
                         mapCompliance.clear()
                         if mapState.isNavigating {
                             assistant.promptAndListen("Anulowano. Kontynuujemy trasę.")
@@ -492,13 +622,18 @@ struct DriveView: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showNavDriveMate)
         .animation(.spring(response: 0.45, dampingFraction: 0.84), value: showVoiceConfigEyes)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: restaurantOffer.phase)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: storeOffer.phase)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: gasOffer.phase)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: arrivalConfirm.isPrompting)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: infoCard.isActive)
         .onChange(of: mapState.isNavigating) { _, navigating in
             if navigating {
                 idleVoiceMode = false
                 mapCompliance.clear()
                 assistant.dismissAvatar()
+                arReminderShownFor = []
+                arIntersectionReminder = nil
+                arrivalConfirm.resetForNewTrip()
                 // Wake już działa w całej sekcji Drive — upewnij się, że jest włączony.
                 assistant.setNavigationWakeListening(true)
                 revealMusicBar()
@@ -510,6 +645,17 @@ struct DriveView: View {
                 isMusicBarVisible = false
                 isSpeeding = false
                 speedPulseScale = 1
+                exitARMode(stopCameraIfIdle: true)
+                arrivalConfirm.resetForNewTrip()
+            }
+        }
+        .onChange(of: mapState.nextTurnGuidance) { _, guidance in
+            updateARIntersectionReminder(with: guidance)
+        }
+        .onChange(of: mapState.recenterRequestID) { _, _ in
+            // Głosowe „wyśrodkuj” przy włączonym AR — wróć do mapy, żeby widać efekt.
+            if isARMode {
+                exitARMode(stopCameraIfIdle: true)
             }
         }
         .onChange(of: location.speedKmh) { _, speed in
@@ -517,36 +663,23 @@ struct DriveView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: isSpeeding)
         .onAppear {
+            // Nie pokazuj asystenta przy samym wejściu na zakładkę — tylko po wywołaniu.
+            assistant.ensureAvatarHiddenUnlessActive()
             mapState.updateGuidance(userCoordinate: location.coordinate)
             assistant.setNavigationWakeListening(true)
         }
         .onDisappear {
             musicHideTask?.cancel()
+            assistant.ensureAvatarHiddenUnlessActive()
             assistant.setNavigationWakeListening(false)
+            // Przy przejściu na Recorder / Settings nie przerywaj muzyki.
+            MusicPlayerService.shared.ensurePlaybackSessionCompatible()
         }
         .onChange(of: location.coordinate?.latitude) { _, _ in
-            mapState.updateGuidance(userCoordinate: location.coordinate)
-            mapState.trackTripProgress(userCoordinate: location.coordinate)
-            if let coord = location.coordinate {
-                DriveMateMemoryStore.shared.observeNavigationAdherence(
-                    userCoordinate: coord,
-                    route: mapState.route,
-                    destinationTitle: mapState.destinationTitle,
-                    destinationCoordinate: mapState.destinationCoordinate
-                )
-            }
+            handleNavigationLocationTick()
         }
         .onChange(of: location.coordinate?.longitude) { _, _ in
-            mapState.updateGuidance(userCoordinate: location.coordinate)
-            mapState.trackTripProgress(userCoordinate: location.coordinate)
-            if let coord = location.coordinate {
-                DriveMateMemoryStore.shared.observeNavigationAdherence(
-                    userCoordinate: coord,
-                    route: mapState.route,
-                    destinationTitle: mapState.destinationTitle,
-                    destinationCoordinate: mapState.destinationCoordinate
-                )
-            }
+            handleNavigationLocationTick()
         }
         .onChange(of: mapState.turnAnnouncement) { _, announcement in
             guard let announcement else { return }
@@ -612,13 +745,21 @@ struct DriveView: View {
                 .animation(.easeInOut(duration: 0.25), value: camera.showsRecordingIndicator)
                 .animation(.spring(response: 0.38, dampingFraction: 0.84), value: chromeVisibility.hidden)
 
-                Spacer()
+                Spacer(minLength: 0)
                 DriveMatePanel(
                     assistant: assistant,
                     guidance: mapState.nextTurnGuidance
                 )
                 .padding(.trailing, 36)
-                .padding(.top, 12)
+                .padding(.top, 14)
+                .animation(
+                    .spring(response: 0.38, dampingFraction: 0.84),
+                    value: mapState.nextTurnGuidance?.maneuverID
+                )
+                .animation(
+                    .spring(response: 0.38, dampingFraction: 0.84),
+                    value: mapState.nextTurnGuidance == nil
+                )
             }
 
             Spacer()
@@ -627,10 +768,16 @@ struct DriveView: View {
 
         VStack {
             Spacer()
+                .allowsHitTesting(false)
             HStack(alignment: .bottom) {
                 Spacer()
+                    .allowsHitTesting(false)
                 VStack(alignment: .trailing, spacing: 12) {
-                    if chromeVisibility.isVisible(.recenter), mapState.showRecenterButton {
+                    ARNavButton(isActive: isARMode) {
+                        revealMusicBar()
+                        toggleARMode()
+                    }
+                    if !isARMode, chromeVisibility.isVisible(.recenter), mapState.showRecenterButton {
                         RecenterNavButton {
                             revealMusicBar()
                             mapState.recenterOnUser()
@@ -651,7 +798,7 @@ struct DriveView: View {
             VStack {
                 Spacer(minLength: 0)
                     .allowsHitTesting(false)
-                MusicControlsBar(player: player, hasTracks: player.hasTracks || !library.tracks.isEmpty)
+                MusicControlsBar(player: player)
                     .padding(.leading, leadingChrome + 8)
                     .padding(.trailing, 36)
                     .padding(.bottom, 14)
@@ -662,13 +809,36 @@ struct DriveView: View {
                     )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-            .zIndex(12)
+            // Nad warstwą „Zakończ trasę”, żeby przyciski play/pauza dostawały dotyk.
+            .zIndex(25)
+        }
+    }
+
+    private func handleNavigationLocationTick() {
+        mapState.updateGuidance(userCoordinate: location.coordinate)
+        mapState.trackTripProgress(userCoordinate: location.coordinate)
+        mapState.considerAutoReroute(userCoordinate: location.coordinate)
+        arrivalConfirm.update(
+            userCoordinate: location.coordinate,
+            destinationCoordinate: mapState.destinationCoordinate,
+            destinationTitle: mapState.destinationTitle,
+            isNavigating: mapState.isNavigating
+        )
+        if let coord = location.coordinate {
+            DriveMateMemoryStore.shared.observeNavigationAdherence(
+                userCoordinate: coord,
+                route: mapState.route,
+                destinationTitle: mapState.destinationTitle,
+                destinationCoordinate: mapState.destinationCoordinate
+            )
         }
     }
 
     private func endRoute() {
         musicHideTask?.cancel()
         isMusicBarVisible = false
+        exitARMode(stopCameraIfIdle: true)
+        arrivalConfirm.resetForNewTrip()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         DriveMateMemoryStore.shared.notifyTripEnded(
             destinationTitle: mapState.destinationTitle,
@@ -678,6 +848,58 @@ struct DriveView: View {
         let summary = mapState.endTripAndSummarize()
         withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
             tripSummary = summary
+        }
+    }
+
+    private func toggleARMode() {
+        if isARMode {
+            exitARMode(stopCameraIfIdle: true)
+        } else {
+            Task { await enterARMode() }
+        }
+    }
+
+    private func enterARMode() async {
+        await camera.requestAccessAndConfigure()
+        guard camera.permissionGranted else {
+            assistant.lastError = camera.lastError ?? "Brak dostępu do kamery."
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.35)) {
+            isARMode = true
+        }
+        updateARIntersectionReminder(with: mapState.nextTurnGuidance)
+    }
+
+    private func exitARMode(stopCameraIfIdle: Bool) {
+        arReminderTask?.cancel()
+        arReminderTask = nil
+        withAnimation(.easeInOut(duration: 0.35)) {
+            isARMode = false
+            arIntersectionReminder = nil
+        }
+        if stopCameraIfIdle {
+            camera.stopSession()
+        }
+    }
+
+    /// Na skrzyżowaniu (≤ 40 m) pokaż symbol skrętu na 5 s — raz na manewr.
+    private func updateARIntersectionReminder(with guidance: NextTurnGuidance?) {
+        guard isARMode else { return }
+        guard let guidance, guidance.isAtIntersectionForAR else { return }
+        guard !arReminderShownFor.contains(guidance.maneuverID) else { return }
+
+        arReminderShownFor.insert(guidance.maneuverID)
+        arReminderTask?.cancel()
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+            arIntersectionReminder = guidance.direction
+        }
+        arReminderTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.45)) {
+                arIntersectionReminder = nil
+            }
         }
     }
 

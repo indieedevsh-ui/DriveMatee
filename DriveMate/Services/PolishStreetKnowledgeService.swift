@@ -182,9 +182,7 @@ enum PolishStreetKnowledgeService {
               let features = json["features"] as? [[String: Any]],
               !features.isEmpty else { return nil }
 
-        let preferred = preferredName?
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
-            .lowercased()
+        let preferred = preferredName.map { DriveIntentQueryHelpers.foldForMatching($0) }
 
         func props(_ f: [String: Any]) -> [String: Any] {
             f["properties"] as? [String: Any] ?? [:]
@@ -193,9 +191,9 @@ enum PolishStreetKnowledgeService {
         let chosen: [String: Any] = {
             if let preferred, !preferred.isEmpty,
                let match = features.first(where: {
-                   let n = (props($0)["nazwaUlicy"] as? String ?? "")
-                       .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
-                       .lowercased()
+                   let n = DriveIntentQueryHelpers.foldForMatching(
+                       props($0)["nazwaUlicy"] as? String ?? ""
+                   )
                    return n.contains(preferred) || preferred.contains(n)
                }) {
                 return props(match)

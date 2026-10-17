@@ -171,7 +171,8 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
                     Zasady:
                     - NIGDY nie zmyślaj tras, ETA, adresów ani wyników mapy.
-                    - Jeśli nie umiesz czegoś zrobić — powiedz wprost.
+                    - Jeśli nie umiesz czegoś zrobić — powiedz krótko „Nie mogę tego zrealizować.” Bez listy umiejętności.
+                    - Listę umiejętności podajesz tylko na pytanie „co potrafisz”.
                     - Nie losuj miejsc ani odpowiedzi.
 
                     Nawigacja:
@@ -252,6 +253,8 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         }
         isCapturingCommand = false
         restorePlaybackSession()
+        (music ?? MusicPlayerService.shared)
+            .duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
         if navigationWakeEnabled {
             scheduleWakeSpotting(after: 0.35)
         }
@@ -279,6 +282,8 @@ final class DriveMateAssistant: NSObject, ObservableObject {
                 isAvatarVisible = false
             }
             restorePlaybackSession()
+            (music ?? MusicPlayerService.shared)
+                .duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
             resumeWakeIfNeeded()
         }
     }
@@ -409,9 +414,7 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = trimmed
 
-        music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
-        restorePlaybackSession()
-
+        // Muzyka zostaje spauzowana do końca odpowiedzi asystenta.
         let hasWake = containsWakeWord(trimmed)
         let stripped = stripWakeWord(from: trimmed)
         let command = hasWake ? stripped : trimmed
@@ -445,12 +448,14 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         isWakeListening = false
         wakeRestartTask?.cancel()
 
+        // Hey Drive → od razu płynna pauza muzyki.
+        let player = music ?? MusicPlayerService.shared
+        player.duckForAssistant(true, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+
         if stripped.isEmpty {
             activateListening()
         } else {
             // „Hey Drive jedź na Wawel” — od razu komenda, bez drugiej sesji.
-            music?.duckForAssistant(false, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
-            restorePlaybackSession()
             asr.cancel()
             showAvatar()
             fadeSiriGlow(to: 1, duration: 0.22)
@@ -695,27 +700,54 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         keepListeningAfterSpeech = keepListeningAfter
         synthesizer.stopSpeaking(at: .immediate)
 
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "pl-PL")
-        let base = AVSpeechUtteranceDefaultSpeechRate
-        utterance.rate = faster ? base * 1.08 : base * 0.98
-
-        // Muzyka ma grać dalej cicho pod TTS (nie zatrzymuj).
-        restorePlaybackSession()
+        // Muzyka w dół / pauza — głos asystenta zostaje na pełnej głośności.
         let player = music ?? MusicPlayerService.shared
         let duckEnabled = settings?.autoMuteEnabled ?? true
         player.duckForAssistant(true, autoMuteEnabled: duckEnabled)
 
+        // Zdejmij sesję mikrofonu (voiceChat/playAndRecord) — inaczej TTS jest wyciszony.
+        prepareSpeechAudioSession()
+
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "pl-PL")
+        utterance.volume = 1.0
+        let base = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = faster ? base * 1.08 : base * 0.98
+
         state = .speaking
         synthesizer.speak(utterance)
+    }
+
+    /// Pełna głośność TTS — zejście z playAndRecord/voiceChat (ten tryb ściszał głos).
+    private func prepareSpeechAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // Bez duckOthers na sesji — muzykę ściszamy osobno; TTS ma iść pełną mocą.
+            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setActive(true, options: [])
+        } catch {
+            try? session.setCategory(.playback, mode: .default, options: [])
+            try? session.setActive(true, options: [])
+        }
     }
 
     private func restorePlaybackSession() {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try session.setActive(true, options: [])
         } catch { /* ignore */ }
+    }
+
+    /// Ukryj awatar bez anulowania wake — przy wejściu na zakładkę Drive.
+    func ensureAvatarHiddenUnlessActive() {
+        guard !isCapturingCommand, state != .speaking, state != .thinking else { return }
+        hideAvatarTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) {
+            isAvatarVisible = false
+            speechGlow = 0
+            siriGlowIntensity = 0
+        }
     }
 
     private func containsWakeWord(_ text: String) -> Bool {
@@ -778,8 +810,7 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     }
 
     private func normalizeWakeText(_ text: String) -> String {
-        text.lowercased()
-            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pl_PL"))
+        DriveIntentQueryHelpers.foldForMatching(text)
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: ".", with: " ")

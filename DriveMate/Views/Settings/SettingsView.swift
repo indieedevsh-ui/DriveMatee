@@ -145,9 +145,12 @@ struct SettingsView: View {
     @ObservedObject var library: MusicLibraryService
     @ObservedObject var player: MusicPlayerService
     @ObservedObject var clips: ClipStorageService
+    @ObservedObject private var fuel = FuelProfile.shared
 
     @State private var showImporter = false
     @State private var clipToPreview: RecordedClip?
+    @ObservedObject private var musicSource = MusicSourceController.shared
+    @State private var appleMusicAlert: String?
 
     var body: some View {
         NavigationStack {
@@ -180,6 +183,8 @@ struct SettingsView: View {
         ) { result in
             switch result {
             case .success(let urls):
+                settings.musicSource = .local
+                musicSource.select(.local)
                 Task { await library.importFiles(from: urls) }
             case .failure(let error):
                 library.importMessage = error.localizedDescription
@@ -208,6 +213,25 @@ struct SettingsView: View {
             Button("OK", role: .cancel) { library.importMessage = nil }
         } message: {
             Text(library.importMessage ?? "")
+        }
+        .alert("Spotify", isPresented: $musicSource.spotifyVoiceWarningVisible) {
+            Button("Otwórz Spotify") {
+                musicSource.dismissSpotifyWarning()
+                musicSource.openSpotify()
+            }
+            Button("OK", role: .cancel) {
+                musicSource.dismissSpotifyWarning()
+            }
+        } message: {
+            Text("Wybrano Spotify. Funkcje głosowe związane z muzyką (pauza, następny utwór itd.) nie będą dostępne — zgodnie z polityką Spotify. Odtwarzanie działa w aplikacji Spotify.")
+        }
+        .alert("Apple Music", isPresented: Binding(
+            get: { appleMusicAlert != nil },
+            set: { if !$0 { appleMusicAlert = nil } }
+        )) {
+            Button("OK", role: .cancel) { appleMusicAlert = nil }
+        } message: {
+            Text(appleMusicAlert ?? "")
         }
     }
 
@@ -312,7 +336,7 @@ struct SettingsView: View {
 
                 if let consumption = settings.resolvedFuelConsumption, consumption > 0 {
                     Text(String(format: "Szacunek: %.1f l/100 km · cena orient. %.2f zł/l",
-                                consumption, CarFuelEstimator.defaultFuelPricePLNPerLiter))
+                                consumption, fuel.pricePLNPerLiter))
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(DriveMatePalette.limeRoute)
                 } else if !settings.carModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -320,7 +344,84 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .medium))
                         .modifier(SettingsSecondaryText())
                 }
+
+                fuelControls
             }
+        }
+    }
+
+    /// Bak i poziom paliwa — żeby „ile mi zostało” i „dowiozą mnie” miały odpowiedź.
+    @ViewBuilder
+    private var fuelControls: some View {
+        let consumption = fuel.consumptionLPer100 ?? 0
+        let range = fuel.rangeKm()
+
+        VStack(alignment: .leading, spacing: 12) {
+            Text("BAK I POZIOM PALIWA")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .modifier(SettingsSecondaryText())
+
+            HStack {
+                Text("Poziom")
+                    .font(.system(size: 13, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                Slider(
+                    value: Binding(
+                        get: { fuel.levelPercent },
+                        set: { fuel.setLevelPercent($0) }
+                    ),
+                    in: 0...1
+                )
+                Text("\(Int((fuel.levelPercent * 100).rounded()))%")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(DriveMatePalette.limeRoute)
+                    .frame(width: 46, alignment: .trailing)
+            }
+
+            HStack {
+                Text("Pojemność baku")
+                    .font(.system(size: 13, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                Spacer()
+                Text(String(format: "%.0f l", fuel.tankCapacityLiters))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(DriveMatePalette.limeRoute)
+            }
+
+            HStack {
+                Text("Cena litra")
+                    .font(.system(size: 13, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                Spacer()
+                Text(String(format: "%.2f zł", fuel.pricePLNPerLiter))
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(DriveMatePalette.limeRoute)
+            }
+
+            if consumption > 0 {
+                Text(String(
+                    format: "W baku %.1f l · zasięg ok. %.0f km · do pełnego %.0f zł",
+                    fuel.litersInTank(), range ?? 0,
+                    (fuel.tankCapacityLiters - fuel.litersInTank()) * fuel.pricePLNPerLiter
+                ))
+                .font(.system(size: 12, weight: .medium))
+                .modifier(SettingsSecondaryText())
+
+                Button {
+                    fuel.refill()
+                } label: {
+                    Text("Zatankowałem — bak pełny")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(Capsule().fill(DriveMatePalette.limeRoute))
+                }
+            }
+
+            Text("Paliwo odejmowane jest z baków po każdej zakończonej trasie na podstawie spalania.")
+                .font(.system(size: 11, weight: .medium))
+                .modifier(SettingsSecondaryText())
         }
     }
 
@@ -431,63 +532,137 @@ struct SettingsView: View {
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .modifier(SettingsPrimaryText())
 
-                Text("Wgraj pliki MP3 lub MP4. Pliki wideo są automatycznie konwertowane do audio (AAC/M4A — natywny format Apple; iOS nie udostępnia licencjonowanego enkodera MP3).")
+                Text("Wybierz źródło odtwarzania. Sterowanie głosowe działa dla wgranych plików i Apple Music.")
                     .font(.system(size: 13, weight: .medium))
                     .modifier(SettingsSecondaryText())
 
-                Button {
-                    showImporter = true
-                } label: {
-                    HStack {
-                        if library.isImporting {
-                            ProgressView()
-                                .tint(.black)
-                        } else {
-                            Image(systemName: "square.and.arrow.down")
-                        }
-                        Text(library.isImporting ? "Importowanie…" : "Wgraj muzykę")
-                            .fontWeight(.bold)
+                // 1) Wgraj Muzykę
+                musicSourceRow(
+                    source: .local,
+                    subtitle: "Pliki MP3/MP4 z urządzenia (AAC/M4A)."
+                ) {
+                    let already = settings.musicSource == .local
+                    settings.musicSource = .local
+                    musicSource.select(.local)
+                    if already || library.tracks.isEmpty {
+                        showImporter = true
                     }
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(DriveMatePalette.neonGreen, in: Capsule())
                 }
-                .buttonStyle(.plain)
-                .disabled(library.isImporting)
 
-                if library.tracks.isEmpty {
-                    Text("Brak utworów w bibliotece.")
-                        .font(.subheadline)
-                        .modifier(SettingsSecondaryText())
-                } else {
-                    ForEach(library.tracks) { track in
-                        HStack {
-                            Button {
-                                player.play(track: track)
-                            } label: {
-                                HStack {
-                                    Image(systemName: "music.note")
-                                    Text(track.name)
-                                        .font(.subheadline.weight(.semibold))
-                                        .lineLimit(1)
-                                }
-                                .modifier(SettingsPrimaryText())
-                            }
-                            .buttonStyle(.plain)
-                            Spacer()
-                            Button(role: .destructive) {
-                                if player.currentTrack == track { player.pause() }
-                                library.delete(track)
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red.opacity(0.9))
-                            }
-                            .buttonStyle(.plain)
+                if settings.musicSource == .local {
+                    localTracksList
+                }
+
+                // 2) Apple Music
+                musicSourceRow(
+                    source: .appleMusic,
+                    subtitle: musicSource.appleMusicAuthorized
+                        ? "Połączono z Twoim Apple Music."
+                        : "Połącz konto Apple Music (MusicKit)."
+                ) {
+                    settings.musicSource = .appleMusic
+                    musicSource.select(.appleMusic)
+                    Task {
+                        let ok = await musicSource.requestAppleMusicIfNeeded()
+                        if !ok, let msg = musicSource.appleMusicStatusMessage {
+                            appleMusicAlert = msg
                         }
-                        .padding(.vertical, 4)
                     }
                 }
+
+                // 3) Spotify
+                musicSourceRow(
+                    source: .spotify,
+                    subtitle: "Odtwarzanie w Spotify — bez komend głosowych muzyki."
+                ) {
+                    settings.musicSource = .spotify
+                    musicSource.select(.spotify)
+                }
+            }
+        }
+    }
+
+    private func musicSourceRow(
+        source: MusicSource,
+        subtitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let selected = settings.musicSource == source
+        return Button(action: action) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(source.title)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(selected ? DriveMatePalette.limeRoute : .white.opacity(0.35))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(settings.isDark ? Color.white.opacity(selected ? 0.12 : 0.06) : Color.black.opacity(selected ? 0.08 : 0.04))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        selected ? DriveMatePalette.limeRoute.opacity(0.7) : Color.clear,
+                        lineWidth: 1.2
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var localTracksList: some View {
+        if library.isImporting {
+            HStack(spacing: 8) {
+                ProgressView().tint(DriveMatePalette.limeRoute)
+                Text("Importowanie…")
+                    .font(.subheadline.weight(.semibold))
+                    .modifier(SettingsSecondaryText())
+            }
+        }
+
+        if library.tracks.isEmpty {
+            Text("Brak utworów — wybierz „Wgraj Muzykę”, aby dodać pliki.")
+                .font(.subheadline)
+                .modifier(SettingsSecondaryText())
+        } else {
+            ForEach(library.tracks) { track in
+                HStack {
+                    Button {
+                        settings.musicSource = .local
+                        player.play(track: track)
+                    } label: {
+                        HStack {
+                            Image(systemName: "music.note")
+                            Text(track.name)
+                                .font(.subheadline.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        .modifier(SettingsPrimaryText())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    Button(role: .destructive) {
+                        if player.currentTrack == track { player.pause() }
+                        library.delete(track)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 4)
             }
         }
     }

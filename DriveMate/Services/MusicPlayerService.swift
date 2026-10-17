@@ -19,9 +19,11 @@ final class MusicPlayerService: ObservableObject {
     private var player: AVAudioPlayer?
     private var library: MusicLibraryService?
     private var isDucked = false
+    /// Zapamiętaj, że to my spauzowaliśmy przy Hey Drive — potem wznów płynnie.
+    private var pausedForAssistant = false
+    private var fadeTask: Task<Void, Never>?
 
     private init() {
-        // Zawsze podłącz współdzieloną bibliotekę — komendy głosowe działają bez czekania na onAppear.
         library = MusicLibraryService.shared
     }
 
@@ -39,17 +41,21 @@ final class MusicPlayerService: ObservableObject {
 
     func bind(library: MusicLibraryService) {
         self.library = library
-        // Utrzymaj indeks w zakresie po imporcie / usunięciu
         if currentIndex >= activeTracks.count {
             currentIndex = 0
         }
     }
 
     func togglePlayPause() {
+        // Panel / stary kod — kieruj przez źródło (Apple Music / lokalne / Spotify).
+        if MusicSourceController.shared.source != .local {
+            MusicSourceController.shared.uiTogglePlayPause()
+            return
+        }
         if isPlaying {
             pause()
         } else {
-            play()
+            _ = play()
         }
     }
 
@@ -58,33 +64,89 @@ final class MusicPlayerService: ObservableObject {
         let tracks = activeTracks
         guard !tracks.isEmpty else {
             isPlaying = false
+            objectWillChange.send()
             return false
         }
         if currentIndex >= tracks.count { currentIndex = 0 }
-        if player == nil {
+
+        // Zawsze przeładuj, gdy brak playera albo plik się zmienił.
+        if player == nil || player?.url != tracks[currentIndex].fileURL {
             load(trackAt: currentIndex)
         }
-        guard player != nil else {
+        guard let player else {
             isPlaying = false
+            objectWillChange.send()
             return false
         }
         configureSession()
-        player?.volume = isDucked ? duckedVolume : volume
-        player?.play()
-        isPlaying = true
+        // Ręczne play anuluje „pauzę dla asystenta”.
+        if pausedForAssistant || isDucked {
+            fadeTask?.cancel()
+            pausedForAssistant = false
+            isDucked = false
+        }
+        player.volume = volume
+        let started = player.play()
+        isPlaying = started
+        objectWillChange.send()
         notifyControlsChanged()
-        return true
+        MusicSourceController.shared.syncPlayingState()
+        return started
     }
 
     func pause() {
         player?.pause()
         isPlaying = false
+        objectWillChange.send()
         notifyControlsChanged()
+        MusicSourceController.shared.syncPlayingState()
     }
 
-    /// Przesuń na kolejny utwór. `andPlay` — od razu odtwarzaj (komendy głosowe).
+    /// Zatrzymaj zewnętrzne źródła gdy wracamy do lokalnych plików.
+    func pauseExternalIfNeeded() {
+        // Apple Music pauzuje MusicSourceController.
+    }
+
+    /// Komendy dla lokalnej biblioteki plików (głos + panel).
+    func executeLocalCommand(_ command: MusicPlaybackCommand) -> String {
+        bind(library: MusicLibraryService.shared)
+        MusicLibraryService.shared.load()
+
+        guard hasTracks else {
+            notifyControlsChanged()
+            return "Nie mam utworów — dodaj muzykę w ustawieniach (Wgraj Muzykę)."
+        }
+
+        switch command {
+        case .pause:
+            if !isPlaying { return "Muzyka już jest wstrzymana." }
+            pause()
+            return "Pauza."
+        case .resume:
+            if play(), let name = currentTrack?.name { return "Wznawiam \(name)." }
+            return "Nie udało się odtworzyć utworu."
+        case .toggle:
+            if isPlaying {
+                pause()
+                return "Pauza."
+            }
+            if play(), let name = currentTrack?.name { return "Wznawiam \(name)." }
+            return "Nie udało się odtworzyć utworu."
+        case .next:
+            if next(andPlay: true), let name = currentTrack?.name { return "Następny utwór: \(name)." }
+            return "Nie udało się przełączyć utworu."
+        case .previous:
+            if previous(andPlay: true), let name = currentTrack?.name { return "Poprzedni utwór: \(name)." }
+            return "Nie udało się przełączyć utworu."
+        }
+    }
+
     @discardableResult
     func next(andPlay: Bool = false) -> Bool {
+        if MusicSourceController.shared.source != .local {
+            MusicSourceController.shared.uiNext()
+            return true
+        }
         let tracks = activeTracks
         guard !tracks.isEmpty else { return false }
         currentIndex = (currentIndex + 1) % tracks.count
@@ -96,9 +158,12 @@ final class MusicPlayerService: ObservableObject {
         return true
     }
 
-    /// Cofnij na poprzedni. `andPlay` — od razu odtwarzaj (komendy głosowe).
     @discardableResult
     func previous(andPlay: Bool = false) -> Bool {
+        if MusicSourceController.shared.source != .local {
+            MusicSourceController.shared.uiPrevious()
+            return true
+        }
         let tracks = activeTracks
         guard !tracks.isEmpty else { return false }
         currentIndex = (currentIndex - 1 + tracks.count) % tracks.count
@@ -111,28 +176,113 @@ final class MusicPlayerService: ObservableObject {
     }
 
     func play(track: MusicTrack) {
+        // Odtwarzanie z listy w ustawieniach = lokalne źródło.
+        UserDefaults.standard.set(MusicSource.local.rawValue, forKey: "musicSource")
         let tracks = activeTracks
         guard let index = tracks.firstIndex(of: track) else { return }
         currentIndex = index
         load(trackAt: index)
-        play()
+        _ = play()
     }
 
-    /// Ścisza muzykę gdy Drive Mate mówi — nadal gra cicho w tle.
+    /// Hey Drive / asystent: płynnie pauzuj; po odpowiedzi — płynnie wznów.
     func duckForAssistant(_ shouldDuck: Bool, autoMuteEnabled: Bool = true) {
         guard autoMuteEnabled else {
-            if isDucked {
+            if isDucked || pausedForAssistant {
+                fadeTask?.cancel()
                 isDucked = false
+                pausedForAssistant = false
                 player?.volume = volume
             }
             return
         }
-        isDucked = shouldDuck
-        player?.volume = shouldDuck ? duckedVolume : volume
+        if shouldDuck {
+            holdMusicForAssistant()
+        } else {
+            releaseMusicAfterAssistant()
+        }
     }
 
-    private var duckedVolume: Float {
-        max(0.08, volume * 0.28)
+    /// Płynne wyciszenie → pauza (lokalne + Apple Music).
+    private func holdMusicForAssistant() {
+        fadeTask?.cancel()
+        isDucked = true
+        MusicSourceController.shared.holdPlaybackForAssistant()
+
+        guard MusicSourceController.shared.source == .local else { return }
+        guard let player, player.isPlaying || isPlaying else { return }
+
+        let startVol = player.volume
+        fadeTask = Task { @MainActor in
+            let steps = 10
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let t = Float(step) / Float(steps)
+                player.volume = startVol * (1 - t)
+                try? await Task.sleep(nanoseconds: 28_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            player.pause()
+            pausedForAssistant = true
+            isPlaying = false
+            objectWillChange.send()
+            MusicSourceController.shared.syncPlayingState()
+        }
+    }
+
+    /// Wznów odtwarzanie z płynnym fade-in po asystencie.
+    private func releaseMusicAfterAssistant() {
+        fadeTask?.cancel()
+        isDucked = false
+        MusicSourceController.shared.releasePlaybackAfterAssistant()
+
+        guard MusicSourceController.shared.source == .local else {
+            pausedForAssistant = false
+            return
+        }
+        guard pausedForAssistant else {
+            player?.volume = volume
+            return
+        }
+        pausedForAssistant = false
+
+        configureSession()
+        guard let player else { return }
+        player.volume = 0
+        let started = player.play()
+        isPlaying = started
+        objectWillChange.send()
+        MusicSourceController.shared.syncPlayingState()
+        guard started else {
+            player.volume = volume
+            return
+        }
+
+        let target = volume
+        fadeTask = Task { @MainActor in
+            let steps = 12
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let t = Float(step) / Float(steps)
+                player.volume = target * t
+                try? await Task.sleep(nanoseconds: 30_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            player.volume = target
+            notifyControlsChanged()
+        }
+    }
+
+    /// Przywróć sesję playback bez przerywania trwającego utworu (Recorder / zakładki).
+    func ensurePlaybackSessionCompatible() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? session.setActive(true, options: [])
+        // Jeśli graliśmy i silnik nadal ma playera — upewnij się, że nie stoi przez sesję.
+        if isPlaying, let player, !player.isPlaying, !pausedForAssistant, !isDucked {
+            player.volume = volume
+            _ = player.play()
+        }
     }
 
     private func load(trackAt index: Int) {
@@ -143,11 +293,18 @@ final class MusicPlayerService: ObservableObject {
             return
         }
         let track = tracks[index]
+        let url = track.fileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            player = nil
+            isPlaying = false
+            return
+        }
         do {
-            player = try AVAudioPlayer(contentsOf: track.fileURL)
-            player?.prepareToPlay()
-            player?.volume = isDucked ? duckedVolume : volume
-            player?.delegate = PlayerDelegate.shared
+            let audio = try AVAudioPlayer(contentsOf: url)
+            audio.prepareToPlay()
+            audio.volume = volume
+            audio.delegate = PlayerDelegate.shared
+            player = audio
             PlayerDelegate.shared.onFinish = { [weak self] in
                 Task { @MainActor in
                     self?.next(andPlay: true)
@@ -161,6 +318,7 @@ final class MusicPlayerService: ObservableObject {
 
     private func configureSession() {
         let session = AVAudioSession.sharedInstance()
+        // mixWithOthers — nie wyciszaj systemu/TTS; muzykę przy asystencie ściszamy ręcznie.
         try? session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true, options: [])
     }
@@ -170,7 +328,6 @@ final class MusicPlayerService: ObservableObject {
     }
 }
 
-/// AVAudioPlayerDelegate must be an NSObject; kept tiny and shared.
 final class PlayerDelegate: NSObject, AVAudioPlayerDelegate {
     static let shared = PlayerDelegate()
     var onFinish: (() -> Void)?

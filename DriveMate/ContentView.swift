@@ -19,8 +19,19 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
-            let islandPad = landscape ? max(geo.safeAreaInsets.leading, 47) : max(geo.safeAreaInsets.leading, 12)
-            let sidebarWidth = islandPad + 108 + 22
+            let placement: SidebarPlacement = landscape ? .leading : .bottom
+            let edgeSafe: CGFloat = {
+                if landscape {
+                    return max(geo.safeAreaInsets.leading, 47)
+                }
+                return max(geo.safeAreaInsets.bottom, 12)
+            }()
+            let leadingChrome: CGFloat = landscape
+                ? SidebarView.leadingWidth(edgeSafe: edgeSafe) + 12
+                : 16
+            let bottomChrome: CGFloat = landscape
+                ? 0
+                : SidebarView.bottomHeight(edgeSafe: edgeSafe)
 
             ZStack {
                 Group {
@@ -32,25 +43,39 @@ struct ContentView: View {
                 }
                 .ignoresSafeArea()
 
-                tabContent(sidebarWidth: sidebarWidth)
+                tabContent(leadingChrome: leadingChrome, bottomChrome: bottomChrome)
                     .ignoresSafeArea()
 
-                HStack(spacing: 0) {
-                    SidebarView(
-                        selected: $selectedTab,
-                        isDark: settings.isDark,
-                        leadingSafe: islandPad
-                    )
-
-                    Spacer(minLength: 0)
-
-                    if selectedTab == .drive && landscape && mapState.isNavigating {
-                        RightGlassEdge()
+                // Sidebar: lewa (poziom) albo dół (pion) — automatycznie.
+                Group {
+                    if landscape {
+                        HStack(spacing: 0) {
+                            SidebarView(
+                                selected: $selectedTab,
+                                isDark: settings.isDark,
+                                placement: .leading,
+                                edgeSafe: edgeSafe
+                            )
+                            Spacer(minLength: 0)
+                            if selectedTab == .drive && mapState.isNavigating {
+                                RightGlassEdge()
+                            }
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            SidebarView(
+                                selected: $selectedTab,
+                                isDark: settings.isDark,
+                                placement: .bottom,
+                                edgeSafe: edgeSafe
+                            )
+                        }
                     }
                 }
                 .ignoresSafeArea()
+                .animation(.spring(response: 0.42, dampingFraction: 0.86), value: placement)
 
-                // Poświata Siri — cała aplikacja, płynne pojawianie przy dyktafonie / słuchaniu
                 SiriEdgeGlowOverlay(intensity: assistant.siriGlowIntensity)
                     .ignoresSafeArea()
                     .zIndex(100)
@@ -87,7 +112,6 @@ struct ContentView: View {
             showNavEULA = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .driveMateDidNavigate)) { note in
-            // Nie zapisuj parkingów z „Znajdź pobliskie parkingi” — tylko cele wpisane / wybrane świadomie.
             if let saveRecent = note.userInfo?["saveRecent"] as? Bool, saveRecent == false {
                 return
             }
@@ -104,13 +128,16 @@ struct ContentView: View {
         }
         .onChange(of: selectedTab) { _, tab in
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            MusicPlayerService.shared.ensurePlaybackSessionCompatible()
             if tab == .recorder, settings.recorderEnabled {
                 Task { await camera.requestAccessAndConfigure() }
             } else if tab != .recorder {
-                // Nie zatrzymuj sesji gdy trwa ciągłe nagrywanie — działa w tle na Drive.
                 if !camera.isContinuousRecording {
                     camera.stopSession()
                 }
+            }
+            if tab == .drive {
+                assistant.ensureAvatarHiddenUnlessActive()
             }
         }
         .onAppear {
@@ -119,7 +146,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func tabContent(sidebarWidth: CGFloat) -> some View {
+    private func tabContent(leadingChrome: CGFloat, bottomChrome: CGFloat) -> some View {
         switch selectedTab {
         case .drive:
             DriveView(
@@ -132,7 +159,8 @@ struct ContentView: View {
                 recentPlaces: recentPlaces,
                 settings: settings,
                 isDark: settings.isDark,
-                leadingChrome: sidebarWidth + 12
+                leadingChrome: leadingChrome,
+                bottomChrome: bottomChrome
             )
         case .recorder:
             RecorderView(
@@ -141,7 +169,7 @@ struct ContentView: View {
                 settings: settings,
                 isDark: settings.isDark
             )
-            .padding(.leading, sidebarWidth)
+            .padding(.bottom, bottomChrome)
         case .settings:
             SettingsView(
                 settings: settings,
@@ -149,7 +177,8 @@ struct ContentView: View {
                 player: player,
                 clips: clips
             )
-            .padding(.leading, sidebarWidth)
+            .padding(.leading, bottomChrome > 0 ? 0 : max(0, leadingChrome - 12))
+            .padding(.bottom, bottomChrome)
         }
     }
 }

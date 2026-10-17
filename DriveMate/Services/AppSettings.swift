@@ -2,6 +2,31 @@ import Foundation
 import SwiftUI
 import Combine
 
+/// Źródło odtwarzania muzyki w Drive Mate.
+enum MusicSource: String, CaseIterable, Identifiable {
+    case local
+    case appleMusic
+    case spotify
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .local: return "Wgraj Muzykę"
+        case .appleMusic: return "Apple Music"
+        case .spotify: return "Spotify"
+        }
+    }
+
+    /// Sterowanie głosowe (pauza / next…) — wyłączone dla Spotify (polityka Spotify).
+    var supportsVoiceMusicCommands: Bool {
+        switch self {
+        case .local, .appleMusic: return true
+        case .spotify: return false
+        }
+    }
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     @AppStorage("appearance") var appearanceRaw: String = AppAppearance.dark.rawValue {
@@ -38,7 +63,16 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @AppStorage("musicSource") var musicSourceRaw: String = MusicSource.local.rawValue {
+        didSet { objectWillChange.send() }
+    }
+
     var volumeDidChange: ((Double) -> Void)?
+
+    var musicSource: MusicSource {
+        get { MusicSource(rawValue: musicSourceRaw) ?? .local }
+        set { musicSourceRaw = newValue.rawValue }
+    }
 
     var appearance: AppAppearance {
         get { AppAppearance(rawValue: appearanceRaw) ?? .dark }

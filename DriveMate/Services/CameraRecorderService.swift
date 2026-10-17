@@ -47,10 +47,12 @@ final class CameraRecorderService: NSObject, ObservableObject {
             lastError = "Włącz dostęp do kamery w Ustawieniach systemowych."
             return
         }
+        preserveMusicAudioSession()
         if !isConfigured {
             await configureSession()
             isConfigured = true
         }
+        preserveMusicAudioSession()
         startSession()
         applyCurrentRotation()
     }
@@ -60,6 +62,7 @@ final class CameraRecorderService: NSObject, ObservableObject {
             guard let self, !self.session.isRunning else { return }
             self.session.startRunning()
             Task { @MainActor in
+                self.preserveMusicAudioSession()
                 self.isSessionRunning = true
                 if !self.isContinuousRecording {
                     self.statusMessage = "Podgląd tylnej kamery"
@@ -217,7 +220,10 @@ final class CameraRecorderService: NSObject, ObservableObject {
 
     private func preserveMusicAudioSession() {
         let audio = AVAudioSession.sharedInstance()
+        // Tylko wideo — bez przejmowania sesji audio, żeby muzyka grała dalej.
         try? audio.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? audio.setActive(true, options: [])
+        MusicPlayerService.shared.ensurePlaybackSessionCompatible()
     }
 
     private func configureSession() async {

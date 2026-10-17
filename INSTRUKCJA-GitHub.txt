@@ -1,0 +1,69 @@
+================================================================================
+DRIVE MATE — JAK POBRAĆ PROJEKT Z GITHUBA
+================================================================================
+
+Wymagania
+  • macOS
+  • Xcode z SDK iOS 27+
+  • Konto Apple Developer (do uruchomienia na iPhonie)
+  • Git (opcjonalnie — albo pobranie ZIP z GitHuba)
+
+--------------------------------------------------------------------------------
+SPOSÓB 1 — Git (zalecany)
+--------------------------------------------------------------------------------
+
+1. Otwórz Terminal.
+
+2. Przejdź do folderu, w którym chcesz mieć projekt, np.:
+     cd ~/Desktop
+
+3. Sklonuj repozytorium:
+     git clone https://github.com/indieedevsh-ui/DriveMatee.git
+
+4. Wejdź do katalogu:
+     cd DriveMatee
+
+5. Otwórz projekt w Xcode:
+     open DriveMate.xcodeproj
+
+--------------------------------------------------------------------------------
+SPOSÓB 2 — ZIP z GitHuba (bez Gita)
+--------------------------------------------------------------------------------
+
+1. Wejdź na:
+     https://github.com/indieedevsh-ui/DriveMatee
+
+2. Kliknij zielony przycisk Code → Download ZIP.
+
+3. Rozpakuj ZIP (dwuklik na pliku .zip).
+
+4. Wejdź do rozpakowanego folderu i otwórz:
+     DriveMate.xcodeproj
+   (dwuklik albo przeciągnij do Xcode).
+
+--------------------------------------------------------------------------------
+PO OTWARCIU W XCODE
+--------------------------------------------------------------------------------
+
+1. Wybierz swój Team w Signing & Capabilities (nagłówek targetu DriveMate).
+2. Podłącz iPhone’a (zalecane — lokalizacja, mikrofon, kamera, haptyka).
+3. Wybierz urządzenie / symulator u góry okna Xcode.
+4. Product → Run (▶) albo ⌘R.
+5. Przy pierwszym uruchomieniu zaakceptuj zgody:
+   lokalizacja, mikrofon, rozpoznawanie mowy, kamera.
+6. Zaakceptuj w aplikacji warunki nawigacji (EULA), zanim wystartujesz trasę.
+
+--------------------------------------------------------------------------------
+UWAGI
+--------------------------------------------------------------------------------
+
+  • Aplikacja jest zaprojektowana pod landscape (poziomo).
+  • Muzyka: w Settings wgraj pliki MP3/MP4.
+  • Symulator ma ograniczenia (GPS, speech, kamera) — do pełnego testu użyj iPhone’a.
+  • Aktualizacje później (tylko Git):
+      cd DriveMatee
+      git pull
+
+================================================================================
+Koniec instrukcji
+================================================================================

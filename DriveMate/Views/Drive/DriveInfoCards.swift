@@ -8,6 +8,8 @@ struct PlaceOfferCard: View {
     var subtitle: String
     var accentLabel: String
     var footnote: String? = nil
+    var confirmTitle: String = "Zatwierdź"
+    var cancelTitle: String = "Anuluj"
     var onConfirm: () -> Void
     var onCancel: () -> Void
 
@@ -89,7 +91,7 @@ struct PlaceOfferCard: View {
 
             HStack(spacing: 12) {
                 Button(action: onCancel) {
-                    Text("Anuluj")
+                    Text(cancelTitle)
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(maxWidth: .infinity)
@@ -100,7 +102,7 @@ struct PlaceOfferCard: View {
                 .buttonStyle(.plain)
 
                 Button(action: onConfirm) {
-                    Text("Zatwierdź")
+                    Text(confirmTitle)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(.black.opacity(0.88))
                         .frame(maxWidth: .infinity)
@@ -166,6 +168,44 @@ struct GasStationOfferPopup: View {
     }
 }
 
+struct StoreOfferPopup: View {
+    let offer: StoreOffer
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        PlaceOfferCard(
+            photo: offer.snapshotImage,
+            placeholderSystemName: "bag.fill",
+            title: offer.name,
+            subtitle: offer.address.isEmpty ? "\(offer.brandLabel) · Apple Maps" : offer.address,
+            accentLabel: offer.distanceLabel,
+            onConfirm: onConfirm,
+            onCancel: onCancel
+        )
+    }
+}
+
+struct ArrivalConfirmPopup: View {
+    var destinationTitle: String
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        PlaceOfferCard(
+            photo: nil,
+            placeholderSystemName: "flag.checkered",
+            title: "Ukończyć trasę?",
+            subtitle: "Jesteś przy: \(destinationTitle)",
+            accentLabel: "≤ 20 m",
+            confirmTitle: "Tak",
+            cancelTitle: "Nie",
+            onConfirm: onConfirm,
+            onCancel: onCancel
+        )
+    }
+}
+
 /// Okienko info (ulica / paliwo) — zamykane po TTS + 1.5 s.
 struct DriveInfoCardPopup: View {
     let card: DriveInfoCard
@@ -189,20 +229,80 @@ struct DriveInfoCardPopup: View {
 
             case let .fuelCost(distanceKm, liters, costPLN, carModel, consumption):
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Koszt paliwa")
+                    Text("Paliwo na trasie")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
 
-                    infoRow(label: "Długość trasy", value: String(format: "%.1f km", distanceKm))
+                    infoRow(label: "Dystans", value: String(format: "%.1f km", distanceKm), accent: true)
                     infoRow(
                         label: "Zużycie (\(carModel))",
                         value: String(format: "%.1f l  ·  %.1f l/100 km", liters, consumption)
                     )
-                    infoRow(label: "Szacowany koszt", value: String(format: "%.0f zł", costPLN), accent: true)
+                    infoRow(label: "Koszt", value: String(format: "%.0f zł", costPLN), accent: true)
 
-                    Text("Cena orientacyjna \(String(format: "%.2f", CarFuelEstimator.defaultFuelPricePLNPerLiter)) zł/l")
+                    Text("Cena \(String(format: "%.2f", FuelProfile.shared.pricePLNPerLiter)) zł/l")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.4))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+
+            case let .fuelGauge(levelPercent, liters, tankCapacity, rangeKm, carModel, costToFill):
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Text("Paliwo")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Text("\(Int((levelPercent * 100).rounded()))%")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(gaugeColor(levelPercent))
+                    }
+
+                    fuelBar(levelPercent: levelPercent)
+
+                    infoRow(label: "W baku", value: String(format: "%.1f l / %.0f l", liters, tankCapacity))
+                    infoRow(label: "Zasięg", value: String(format: "%.0f km", rangeKm), accent: true)
+                    if costToFill > 0.5 {
+                        infoRow(
+                            label: "Do pełnego",
+                            value: String(format: "%.0f zł", costToFill)
+                        )
+                    }
+
+                    Text(carModel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
+
+            case let .capabilities(items):
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Co umiem")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Spacer(minLength: 8)
+                        Text("Zamknij · 10 s")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(items, id: \.self) { item in
+                            HStack(alignment: .top, spacing: 10) {
+                                Circle()
+                                    .fill(DriveMatePalette.limeRoute)
+                                    .frame(width: 6, height: 6)
+                                    .padding(.top, 6)
+                                Text(item)
+                                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.88))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
@@ -269,6 +369,29 @@ struct DriveInfoCardPopup: View {
                 style: .continuous
             )
         )
+    }
+
+    private func fuelBar(levelPercent: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.12))
+                Capsule()
+                    .fill(gaugeColor(levelPercent))
+                    .frame(width: max(6, geo.size.width * min(max(levelPercent, 0), 1)))
+                if levelPercent <= FuelProfile.reservePercent {
+                    Capsule()
+                        .stroke(Color.white.opacity(0.7), lineWidth: 1)
+                }
+            }
+        }
+        .frame(height: 14)
+    }
+
+    private func gaugeColor(_ levelPercent: Double) -> Color {
+        if levelPercent <= FuelProfile.reservePercent { return .orange }
+        if levelPercent <= 0.25 { return .yellow }
+        return DriveMatePalette.limeRoute
     }
 
     private func infoRow(label: String, value: String, accent: Bool = false) -> some View {

@@ -97,25 +97,25 @@ final class LimeRouteRenderer: MKPolylineRenderer {
 
 /// Biały trójkąt kierunkowy (jak chevron z linii).
 enum RouteArrowImage {
-    static func whiteTriangle(size: CGFloat = 28) -> UIImage {
+    static func turnArrow(direction: TurnDirection, size: CGFloat = 32) -> UIImage {
+        let symbolName = direction.symbolName
+        let config = UIImage.SymbolConfiguration(pointSize: size * 0.72, weight: .bold)
+        let base = UIImage(systemName: symbolName, withConfiguration: config)?
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         return renderer.image { ctx in
             let c = ctx.cgContext
-            let tip = CGPoint(x: size * 0.5, y: size * 0.08)
-            let left = CGPoint(x: size * 0.12, y: size * 0.88)
-            let right = CGPoint(x: size * 0.88, y: size * 0.88)
-            let path = CGMutablePath()
-            path.move(to: tip)
-            path.addLine(to: left)
-            path.addLine(to: right)
-            path.closeSubpath()
-            c.setFillColor(UIColor.white.cgColor)
-            c.addPath(path)
-            c.fillPath()
-            c.setStrokeColor(UIColor.black.withAlphaComponent(0.18).cgColor)
-            c.setLineWidth(1)
-            c.addPath(path)
-            c.strokePath()
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            c.setFillColor(UIColor.black.withAlphaComponent(0.45).cgColor)
+            c.fillEllipse(in: rect.insetBy(dx: 1, dy: 1))
+            if let base {
+                let imgSize = base.size
+                let origin = CGPoint(
+                    x: (size - imgSize.width) / 2,
+                    y: (size - imgSize.height) / 2
+                )
+                base.draw(at: origin)
+            }
         }
     }
 }
@@ -123,13 +123,16 @@ enum RouteArrowImage {
 final class TurnArrowAnnotation: NSObject, MKAnnotation {
     let coordinate: CLLocationCoordinate2D
     let heading: CLLocationDirection
+    let direction: TurnDirection
     let isLeft: Bool
     let isRight: Bool
     let title: String?
 
     init(maneuver: TurnManeuver) {
         coordinate = maneuver.coordinate
+        // Orientacja względem dojazdu: symbol „turn up” wskazuje wylot po skręcie.
         heading = maneuver.heading
+        direction = maneuver.direction
         isLeft = maneuver.isLeft
         isRight = maneuver.isRight
         title = maneuver.instruction
@@ -169,6 +172,7 @@ struct MapDriveView: View {
                 routeRevealCameraCoordinate: mapState.routeRevealCameraCoordinate,
                 destinationFlagVisible: mapState.destinationFlagVisible,
                 destinationFlagBounceToken: mapState.destinationFlagBounceToken,
+                recenterRequestID: mapState.recenterRequestID,
                 isDark: isDark,
                 showsTraffic: mapState.isNavigating,
                 onUserPan: { mapState.userPannedMap() },
@@ -186,10 +190,14 @@ struct MapDriveView: View {
                     Text("·")
                     Text("Legal").font(.system(size: 11, weight: .medium)).underline()
                 }
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.88))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .liquidGlassCapsule(.clear)
+                .background {
+                    Capsule()
+                        .fill(Color.black.opacity(isDark ? 0 : 0.14))
+                        .liquidGlassCapsule(.clear)
+                }
             }
             .buttonStyle(.plain)
             .padding(.leading, leadingChrome + 10)
@@ -241,6 +249,7 @@ struct AppleMapsView: UIViewRepresentable {
     var routeRevealCameraCoordinate: CLLocationCoordinate2D?
     var destinationFlagVisible: Bool
     var destinationFlagBounceToken: Int
+    var recenterRequestID: Int
     var isDark: Bool
     var showsTraffic: Bool
     var onUserPan: () -> Void
@@ -294,7 +303,8 @@ struct AppleMapsView: UIViewRepresentable {
             routeDrawProgress: routeDrawProgress,
             routeRevealCameraCoordinate: routeRevealCameraCoordinate,
             destinationFlagVisible: destinationFlagVisible,
-            destinationFlagBounceToken: destinationFlagBounceToken
+            destinationFlagBounceToken: destinationFlagBounceToken,
+            recenterRequestID: recenterRequestID
         )
     }
 
@@ -331,6 +341,7 @@ struct AppleMapsView: UIViewRepresentable {
         private weak var primaryRouteRenderer: LimeRouteRenderer?
         private var pendingDrawProgress: CGFloat = 0
         private var lastBounceToken: Int = -1
+        private var lastRecenterRequestID: Int = 0
         private weak var flagView: MKMarkerAnnotationView?
 
         @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -364,9 +375,19 @@ struct AppleMapsView: UIViewRepresentable {
             routeDrawProgress: CGFloat,
             routeRevealCameraCoordinate: CLLocationCoordinate2D?,
             destinationFlagVisible: Bool,
-            destinationFlagBounceToken: Int
+            destinationFlagBounceToken: Int,
+            recenterRequestID: Int
         ) {
             pendingDrawProgress = routeDrawProgress
+
+            // Nie „zużywaj” tokena, dopóki nie mamy GPS — inaczej głosowe wyśrodkowanie
+            // przepada, gdy update przyjdzie chwilę przed współrzędną.
+            let pendingRecenter = recenterRequestID != lastRecenterRequestID && recenterRequestID > 0
+            let forceRecenter = pendingRecenter && userCoordinate != nil
+            if forceRecenter {
+                lastRecenterRequestID = recenterRequestID
+                lastFollowCoord = nil
+            }
 
             let routeHash = Self.contentHash(
                 polyline: routePolyline,
@@ -432,8 +453,8 @@ struct AppleMapsView: UIViewRepresentable {
                 Self.bounceFlag(flagView)
             }
 
-            // Intro: kamera podąża za czubkiem rysowanej linii
-            if isAnimatingRouteReveal {
+            // Intro: kamera podąża za czubkiem rysowanej linii (recenter przerywa intro)
+            if isAnimatingRouteReveal, !forceRecenter {
                 if let tip = routeRevealCameraCoordinate {
                     let heading: CLLocationDirection
                     if let poly = routePolyline {
@@ -459,6 +480,21 @@ struct AppleMapsView: UIViewRepresentable {
                 return
             }
 
+            if forceRecenter, let userCoordinate {
+                lastFollowCoord = userCoordinate
+                lastFocus = isNavigating ? .follow : .user
+                let distance: CLLocationDistance = isNavigating ? 850 : 1000
+                let camera = MKMapCamera(
+                    lookingAtCenter: userCoordinate,
+                    fromDistance: distance,
+                    pitch: 0,
+                    heading: 0
+                )
+                // setCamera jest pewniejsze niż UIView.animate na MKMapCamera przy głosie.
+                map.setCamera(camera, animated: true)
+                if isNavigating { return }
+            }
+
             if isNavigating, isFollowingUser, let userCoordinate {
                 let movedEnough: Bool = {
                     guard let last = lastFollowCoord else { return true }
@@ -466,25 +502,25 @@ struct AppleMapsView: UIViewRepresentable {
                     let b = CLLocation(latitude: userCoordinate.latitude, longitude: userCoordinate.longitude)
                     return a.distance(from: b) > 6
                 }()
-                let shouldSnap = cameraFocus == .follow || cameraFocus == .user || lastFocus != .follow
+                // Po głosowym recenter (token już zużyty) i tak trzymaj follow przy ruchu.
+                let shouldSnap = cameraFocus == .user || lastFocus != .follow || pendingRecenter
                 if movedEnough || shouldSnap {
                     lastFollowCoord = userCoordinate
                     lastFocus = .follow
-                    UIView.animate(
-                        withDuration: 0.55,
-                        delay: 0,
-                        options: [.curveEaseInOut, .allowUserInteraction]
-                    ) {
-                        map.camera = MKMapCamera(
+                    map.setCamera(
+                        MKMapCamera(
                             lookingAtCenter: userCoordinate,
                             fromDistance: 850,
                             pitch: 0,
                             heading: 0
-                        )
-                    }
+                        ),
+                        animated: true
+                    )
                 }
                 return
             }
+
+            if forceRecenter { return }
 
             if cameraFocus != lastFocus {
                 lastFocus = cameraFocus
@@ -583,14 +619,15 @@ struct AppleMapsView: UIViewRepresentable {
             if annotation is MKUserLocation { return nil }
 
             if let turn = annotation as? TurnArrowAnnotation {
-                let id = "turnArrowTriangle"
+                let id = "turnArrowLR"
                 let view = mapView.dequeueReusableAnnotationView(withIdentifier: id)
                     ?? MKAnnotationView(annotation: annotation, reuseIdentifier: id)
                 view.annotation = annotation
-                view.image = RouteArrowImage.whiteTriangle(size: 30)
+                view.image = RouteArrowImage.turnArrow(direction: turn.direction, size: 34)
                 view.centerOffset = .zero
                 view.canShowCallout = true
-                view.transform = CGAffineTransform(rotationAngle: CGFloat(turn.heading * .pi / 180))
+                // Bez obrotu — ten sam L/P co kafelek (obrót mylił kierunek względem drogi).
+                view.transform = .identity
                 return view
             }
 
