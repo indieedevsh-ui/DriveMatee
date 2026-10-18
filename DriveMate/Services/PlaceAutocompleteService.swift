@@ -74,7 +74,7 @@ final class PlaceAutocompleteService: NSObject, ObservableObject {
             guard let item = response.mapItems.first else {
                 throw NavigationError.geocodeFailed
             }
-            let coord = item.location.coordinate
+            let coord = MapKitCompatibility.coordinate(of: item)
             let title = item.name ?? suggestion.title
             let subtitle = [
                 item.placemark.thoroughfare,

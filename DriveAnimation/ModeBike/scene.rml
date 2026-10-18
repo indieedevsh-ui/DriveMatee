@@ -1,0 +1,426 @@
+<Rive version="1" kind="fragment">
+    <!--
+      Drive Mate — ModeBike
+      Side-view bicycle, continuously spinning wheels.
+      Dark / neon-friendly, lime accent. Artboard 600×600.
+      Draw order: first declared = on top.
+    -->
+    <Artboard defaultStateMachineId="0:7" styleId="0:5" width="600" height="600" name="ModeBike" id="0:2">
+        <LayoutComponentStyle name="Artboard Style" id="0:5"/>
+
+        <Fill name="Background">
+            <LinearGradient startX="300" startY="0" endX="300" endY="600" name="DarkGrad">
+                <GradientStop colorValue="FF0B1210" position="0" name="Top"/>
+                <GradientStop colorValue="FF122018" position="0.55" name="Mid"/>
+                <GradientStop colorValue="FF0A100E" position="1" name="Bot"/>
+            </LinearGradient>
+        </Fill>
+
+        <!-- ========== FX (front) ========== -->
+        <Node x="0" y="0" name="FX" id="0:200">
+            <Shape x="150" y="300" name="Speed1" id="0:201" opacity="0.7">
+                <Rectangle originX="0.5" originY="0.5" width="48" height="5" cornerRadiusTL="2.5" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+            </Shape>
+            <Shape x="130" y="320" name="Speed2" id="0:202" opacity="0.45">
+                <Rectangle originX="0.5" originY="0.5" width="36" height="4" cornerRadiusTL="2" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFFFFFFF" name="C"/></Fill>
+            </Shape>
+            <Shape x="140" y="340" name="Speed3" id="0:203" opacity="0.55">
+                <Rectangle originX="0.5" originY="0.5" width="42" height="4" cornerRadiusTL="2" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+            </Shape>
+
+            <Shape x="430" y="220" name="Spark1" id="0:220" opacity="0.85">
+                <Star originX="0.5" originY="0.5" width="16" height="16" points="4" innerRadius="0.38" cornerRadius="1" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+            </Shape>
+            <Shape x="470" y="250" name="Spark2" id="0:221" opacity="0.65">
+                <Star originX="0.5" originY="0.5" width="12" height="12" points="4" innerRadius="0.4" cornerRadius="1" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFFFFFFF" name="C"/></Fill>
+            </Shape>
+            <Shape x="410" y="250" name="Spark3" id="0:222" opacity="0.5">
+                <Ellipse originX="0.5" originY="0.5" width="7" height="7" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FFFFF59D" name="C"/></Fill>
+            </Shape>
+        </Node>
+
+        <!-- ========== BIKE ========== -->
+        <Node x="300" y="320" name="Bike" id="0:100">
+            <!-- Seat -->
+            <Shape x="-22" y="-58" name="Seat" id="0:112">
+                <Rectangle originX="0.5" originY="0.5" width="42" height="14" cornerRadiusTL="7" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF1A2B1E" name="C"/></Fill>
+                <Stroke thickness="4" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF0D1A10" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Handlebar grips -->
+            <Shape x="78" y="-62" name="Grip" id="0:113">
+                <Rectangle originX="0.5" originY="0.5" width="28" height="10" cornerRadiusTL="5" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF1A2B1E" name="C"/></Fill>
+                <Stroke thickness="3.5" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF0D1A10" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Stem / stem bar -->
+            <Shape x="62" y="-42" name="Stem" id="0:114">
+                <Rectangle originX="0.5" originY="0.5" width="10" height="36" cornerRadiusTL="5" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF7AE02A" name="C"/></Fill>
+                <Stroke thickness="4" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Top tube -->
+            <Shape x="18" y="-28" name="TopTube" id="0:104">
+                <Rectangle originX="0.5" originY="0.5" width="110" height="14" cornerRadiusTL="7" name="Path"/>
+                <Fill name="Fill">
+                    <LinearGradient startX="0" startY="-7" endX="0" endY="7" name="TubeGrad">
+                        <GradientStop colorValue="FF8BEA3A" position="0" name="Top"/>
+                        <GradientStop colorValue="FF58CC02" position="1" name="Bot"/>
+                    </LinearGradient>
+                </Fill>
+                <Stroke thickness="5" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Seat tube -->
+            <Shape x="-28" y="-18" name="SeatTube" id="0:105">
+                <Rectangle originX="0.5" originY="0.5" width="14" height="70" cornerRadiusTL="7" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF58CC02" name="C"/></Fill>
+                <Stroke thickness="5" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Down tube -->
+            <Shape x="10" y="8" rotation="-0.55" name="DownTube" id="0:106">
+                <Rectangle originX="0.5" originY="0.5" width="120" height="14" cornerRadiusTL="7" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF6AD81A" name="C"/></Fill>
+                <Stroke thickness="5" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Chain stay -->
+            <Shape x="-50" y="28" name="ChainStay" id="0:107">
+                <Rectangle originX="0.5" originY="0.5" width="70" height="10" cornerRadiusTL="5" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF46A302" name="C"/></Fill>
+                <Stroke thickness="4" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Fork -->
+            <Shape x="70" y="10" name="Fork" id="0:108">
+                <Rectangle originX="0.5" originY="0.5" width="12" height="70" cornerRadiusTL="6" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF7AE02A" name="C"/></Fill>
+                <Stroke thickness="4" cap="round" join="round" name="Outline">
+                    <SolidColor colorValue="FF1F3D24" name="C"/>
+                </Stroke>
+            </Shape>
+
+            <!-- Pedal crank -->
+            <Node x="0" y="28" name="Crank" id="0:140">
+                <Shape x="0" y="-14" name="CrankArm" id="0:141">
+                    <Rectangle originX="0.5" originY="0.5" width="8" height="32" cornerRadiusTL="4" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFFFC800" name="C"/></Fill>
+                    <Stroke thickness="3" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="CrankHub" id="0:142">
+                    <Ellipse originX="0.5" originY="0.5" width="18" height="18" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFFFC800" name="C"/></Fill>
+                    <Stroke thickness="3.5" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+            </Node>
+
+            <!-- Rear wheel -->
+            <Node x="-78" y="48" name="WheelR" id="0:120">
+                <Shape x="0" y="-18" name="SpokeR1" id="0:124">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" rotation="1.0472" name="SpokeR2" id="0:125">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" rotation="2.0944" name="SpokeR3" id="0:126">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" name="HubR" id="0:123">
+                    <Ellipse originX="0.5" originY="0.5" width="16" height="16" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFFFC800" name="C"/></Fill>
+                    <Stroke thickness="3.5" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="RimR" id="0:122">
+                    <Ellipse originX="0.5" originY="0.5" width="58" height="58" name="Path"/>
+                    <Stroke thickness="7" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FFE0E0E0" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="TireR" id="0:121">
+                    <Ellipse originX="0.5" originY="0.5" width="78" height="78" name="Path"/>
+                    <Stroke thickness="12" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF263238" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="TireOutlineR" id="0:127">
+                    <Ellipse originX="0.5" originY="0.5" width="88" height="88" name="Path"/>
+                    <Stroke thickness="5" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+            </Node>
+
+            <!-- Front wheel -->
+            <Node x="78" y="48" name="WheelF" id="0:130">
+                <Shape x="0" y="-18" name="SpokeF1" id="0:134">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" rotation="1.0472" name="SpokeF2" id="0:135">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" rotation="2.0944" name="SpokeF3" id="0:136">
+                    <Rectangle originX="0.5" originY="0.5" width="4" height="36" cornerRadiusTL="2" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFB2FF59" name="C"/></Fill>
+                </Shape>
+                <Shape x="0" y="0" name="HubF" id="0:133">
+                    <Ellipse originX="0.5" originY="0.5" width="16" height="16" name="Path"/>
+                    <Fill name="Fill"><SolidColor colorValue="FFFFC800" name="C"/></Fill>
+                    <Stroke thickness="3.5" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="RimF" id="0:132">
+                    <Ellipse originX="0.5" originY="0.5" width="58" height="58" name="Path"/>
+                    <Stroke thickness="7" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FFE0E0E0" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="TireF" id="0:131">
+                    <Ellipse originX="0.5" originY="0.5" width="78" height="78" name="Path"/>
+                    <Stroke thickness="12" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF263238" name="C"/>
+                    </Stroke>
+                </Shape>
+                <Shape x="0" y="0" name="TireOutlineF" id="0:137">
+                    <Ellipse originX="0.5" originY="0.5" width="88" height="88" name="Path"/>
+                    <Stroke thickness="5" cap="round" join="round" name="Outline">
+                        <SolidColor colorValue="FF1F3D24" name="C"/>
+                    </Stroke>
+                </Shape>
+            </Node>
+
+            <!-- Soft ground shadow -->
+            <Shape x="0" y="88" name="Shadow" id="0:101" opacity="0.35">
+                <Ellipse originX="0.5" originY="0.5" width="220" height="24" name="Path"/>
+                <Fill name="Fill"><SolidColor colorValue="FF000000" name="C"/></Fill>
+            </Shape>
+        </Node>
+
+        <!-- Soft neon ground glow -->
+        <Shape x="300" y="430" name="GroundGlow" id="0:160" opacity="0.22">
+            <Ellipse originX="0.5" originY="0.5" width="280" height="40" name="Path"/>
+            <Fill name="Fill"><SolidColor colorValue="FF58CC02" name="C"/></Fill>
+        </Shape>
+
+        <!-- Accent ring -->
+        <Shape x="300" y="300" name="AccentRing" id="0:170" opacity="0.18">
+            <Ellipse originX="0.5" originY="0.5" width="360" height="360" name="Path"/>
+            <Stroke thickness="3" cap="round" join="round" name="Outline">
+                <SolidColor colorValue="FFB2FF59" name="C"/>
+            </Stroke>
+        </Shape>
+
+        <StateMachine name="State Machine 1" id="0:7">
+            <StateMachineLayer name="Layer 1" id="0:8">
+                <AnyState x="200" y="-120"/>
+                <ExitState x="400" y="-120"/>
+                <EntryState>
+                    <StateTransition stateToId="0:12"/>
+                </EntryState>
+                <AnimationState x="200" animationId="0:6" id="0:12"/>
+            </StateMachineLayer>
+        </StateMachine>
+
+        <!-- Looping bike ride: 1.5s -->
+        <LinearAnimation loopValue="loop" duration="90" fps="60" name="BikeLoop" id="0:6">
+            <!-- Soft bounce -->
+            <KeyedObject objectId="0:100">
+                <KeyedProperty propertyKey="14">
+                    <KeyFrameDouble value="320" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="314" frame="22" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="320" frame="45" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="316" frame="68" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="320" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="15">
+                    <KeyFrameDouble value="-0.03" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="0.04" frame="30" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="-0.02" frame="60" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="-0.03" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+
+            <!-- Wheels spin continuously -->
+            <KeyedObject objectId="0:120">
+                <KeyedProperty propertyKey="15">
+                    <KeyFrameDouble value="0" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="6.2831855" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:130">
+                <KeyedProperty propertyKey="15">
+                    <KeyFrameDouble value="0" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="6.2831855" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+
+            <!-- Crank spins with wheels -->
+            <KeyedObject objectId="0:140">
+                <KeyedProperty propertyKey="15">
+                    <KeyFrameDouble value="0" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="6.2831855" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+
+            <!-- Speed lines streak -->
+            <KeyedObject objectId="0:201">
+                <KeyedProperty propertyKey="13">
+                    <KeyFrameDouble value="150" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="100" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.2" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.85" frame="20" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.15" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:202">
+                <KeyedProperty propertyKey="13">
+                    <KeyFrameDouble value="130" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="85" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.1" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.65" frame="35" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.1" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:203">
+                <KeyedProperty propertyKey="13">
+                    <KeyFrameDouble value="140" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="95" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.15" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.75" frame="45" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.12" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+
+            <!-- Sparks twinkle -->
+            <KeyedObject objectId="0:220">
+                <KeyedProperty propertyKey="15">
+                    <KeyFrameDouble value="0" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="3.14159" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="16">
+                    <KeyFrameDouble value="0.7" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1.2" frame="30" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="0.6" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="17">
+                    <KeyFrameDouble value="0.7" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1.2" frame="30" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.4" y1="0" x2="0.6" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="0.6" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.35" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="1" frame="25" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.25" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:221">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.15" frame="0" interpolationType="hold"/>
+                    <KeyFrameDouble value="0.8" frame="40" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.15" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+            <KeyedObject objectId="0:222">
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.25" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.9" frame="50" interpolationType="linear"/>
+                    <KeyFrameDouble value="0.2" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+
+            <!-- Accent ring pulse -->
+            <KeyedObject objectId="0:170">
+                <KeyedProperty propertyKey="16">
+                    <KeyFrameDouble value="1" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1.06" frame="45" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="17">
+                    <KeyFrameDouble value="1" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1.06" frame="45" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="1" frame="90"/>
+                </KeyedProperty>
+                <KeyedProperty propertyKey="18">
+                    <KeyFrameDouble value="0.12" frame="0" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="0.28" frame="45" interpolationType="cubic">
+                        <CubicEaseInterpolator x1="0.42" y1="0" x2="0.58" y2="1"/>
+                    </KeyFrameDouble>
+                    <KeyFrameDouble value="0.12" frame="90"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+    </Artboard>
+</Rive>

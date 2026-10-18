@@ -505,18 +505,21 @@ enum DriveTriviaStore {
     ]
 
     static func nextSpokenFact() -> String {
+        // Preferuj bank z modelu deterministycznego (paczka / seed).
+        let brainFacts = DeterministicBrainEngine.shared.allTrivia
+        let pool = brainFacts.isEmpty ? facts : (facts + brainFacts)
         var used = Set(UserDefaults.standard.array(forKey: usedKey) as? [Int] ?? [])
-        if used.count >= facts.count {
+        if used.count >= pool.count {
             used.removeAll()
         }
-        var available = Array(facts.indices).filter { !used.contains($0) }
+        var available = Array(pool.indices).filter { !used.contains($0) }
         if available.isEmpty {
             used.removeAll()
-            available = Array(facts.indices)
+            available = Array(pool.indices)
         }
         let pick = available.randomElement() ?? 0
         used.insert(pick)
         UserDefaults.standard.set(Array(used), forKey: usedKey)
-        return facts[pick]
+        return pool[pick]
     }
 }

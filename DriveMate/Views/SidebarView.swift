@@ -13,6 +13,8 @@ struct SidebarView: View {
     var placement: SidebarPlacement = .leading
     /// Landscape: strefa pod Dynamic Island. Portrait: home indicator / bottom safe.
     var edgeSafe: CGFloat = 44
+    /// Widoczne zakładki (np. Stats zamiast Recorder w trybie rowerowym).
+    var tabs: [AppTab] = AppTab.visibleTabs(for: .car)
 
     private let labelSpan: CGFloat = 108
     private let bulgeWidth: CGFloat = 22
@@ -23,9 +25,13 @@ struct SidebarView: View {
         edgeSafe + 108 + 22
     }
 
+    /// Extra dolny margines etykiet nad home indicator (portrait).
+    private static let portraitBottomMargin: CGFloat = 14
+
     /// Wysokość zajmowana w portrait (dla ContentView / chrome).
+    /// Bez pełnej fali — content sięga pod wierzchołek paska, żeby nie było czarnego pasa nad zakładkami.
     static func bottomHeight(edgeSafe: CGFloat) -> CGFloat {
-        max(edgeSafe, 12) + 64 + 18
+        max(edgeSafe, 12) + portraitBottomMargin + 64
     }
 
     var body: some View {
@@ -49,11 +55,12 @@ struct SidebarView: View {
             let h = geo.size.height
             let gap: CGFloat = 8
             let vPad: CGFloat = max(36, 40)
-            let itemH = max(72, (h - vPad * 2 - gap * 2) / 3)
+            let tabCount = max(CGFloat(tabs.count), 1)
+            let itemH = max(72, (h - vPad * 2 - gap * (tabCount - 1)) / tabCount)
 
             ZStack(alignment: .topLeading) {
                 LeadingSidebarGlass(
-                    selectedIndex: AppTab.allCases.firstIndex(of: selected) ?? 0,
+                    selectedIndex: tabs.firstIndex(of: selected) ?? 0,
                     itemHeight: itemH,
                     gap: gap,
                     topPad: vPad,
@@ -63,7 +70,7 @@ struct SidebarView: View {
                 .frame(width: laidOutWidth, height: h)
 
                 VStack(spacing: gap) {
-                    ForEach(AppTab.allCases) { tab in
+                    ForEach(tabs) { tab in
                         tabButton(tab, vertical: true)
                             .frame(width: labelSpan, height: itemH)
                     }
@@ -83,18 +90,20 @@ struct SidebarView: View {
     private var bottomBar: some View {
         let barBody: CGFloat = 64
         let bulge: CGFloat = 18
-        let contentHeight = edgeSafe + barBody + bulge
+        let bottomMargin = Self.portraitBottomMargin
+        let contentHeight = edgeSafe + bottomMargin + barBody + bulge
         let laidOutHeight = contentHeight + edgeBleed
 
         return GeometryReader { geo in
             let w = geo.size.width
             let gap: CGFloat = 6
             let hPad: CGFloat = 10
-            let itemW = max(72, (w - hPad * 2 - gap * 2) / 3)
+            let tabCount = max(CGFloat(tabs.count), 1)
+            let itemW = max(72, (w - hPad * 2 - gap * (tabCount - 1)) / tabCount)
 
             ZStack(alignment: .bottomLeading) {
                 BottomSidebarGlass(
-                    selectedIndex: AppTab.allCases.firstIndex(of: selected) ?? 0,
+                    selectedIndex: tabs.firstIndex(of: selected) ?? 0,
                     itemWidth: itemW,
                     gap: gap,
                     leadingPad: hPad,
@@ -104,13 +113,13 @@ struct SidebarView: View {
                 .frame(width: w, height: laidOutHeight)
 
                 HStack(spacing: gap) {
-                    ForEach(AppTab.allCases) { tab in
+                    ForEach(tabs) { tab in
                         tabButton(tab, vertical: false)
                             .frame(width: itemW, height: barBody)
                     }
                 }
                 .padding(.leading, hPad)
-                .padding(.bottom, edgeBleed + edgeSafe)
+                .padding(.bottom, edgeBleed + edgeSafe + bottomMargin)
             }
         }
         .frame(height: laidOutHeight)
@@ -259,30 +268,62 @@ private struct BottomSidebarGlass: View {
         GeometryReader { geo in
             let size = geo.size
             let bulgeX = leadingPad + CGFloat(selectedIndex) * (itemWidth + gap) + itemWidth / 2
+            let bulgeW = itemWidth + 20
             let shape = BottomSidebarPath(
                 bulgeCenterX: bulgeX,
-                bulgeWidth: itemWidth + 20,
+                bulgeWidth: bulgeW,
                 bulgeHeight: bulgeHeight
             )
 
             ZStack {
+                // Baza jak w landscape — pełna czerń pod szkłem.
                 shape.fill(Color.black)
+
+                // Lekki material tylko na korpusie paska (nie na fali — unikamy szarej „czapki”).
                 shape.fill(.regularMaterial)
-                    .opacity(0.5)
+                    .opacity(0.38)
                     .mask(
                         VStack(spacing: 0) {
+                            Color.clear.frame(height: contentStartY + 2)
                             Color.white
-                            Color.clear.frame(height: max(0, size.height - contentStartY - 4))
                         }
                     )
+
+                // Gradient: fala i górna krawędź w tym samym czarnym tonie co pasek,
+                // delikatne rozjaśnienie tylko na samym czubku fali.
                 shape.fill(
                     LinearGradient(
                         stops: [
-                            .init(color: Color.black.opacity(0.04), location: 0.0),
-                            .init(color: Color.black.opacity(0.18), location: 0.16),
-                            .init(color: Color.black.opacity(0.55), location: 0.42),
-                            .init(color: .black, location: 0.78),
+                            .init(color: Color(white: 0.14).opacity(0.55), location: 0.0),
+                            .init(color: Color.black.opacity(0.92), location: 0.14),
+                            .init(color: .black, location: 0.34),
                             .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+
+                // Subtelna obwódka fali — spójna z glow aktywnej zakładki.
+                shape.stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.28),
+                            Color.white.opacity(0.08),
+                            Color.clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1.1
+                )
+                .mask(
+                    // Tylko górna część z falą
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white, location: 0.0),
+                            .init(color: .white, location: 0.22),
+                            .init(color: .clear, location: 0.48)
                         ],
                         startPoint: .top,
                         endPoint: .bottom

@@ -1,4 +1,7 @@
 name: DriveAnimation
+exclude:
+  - ModeBike
+  - ModeCar
 logs:
   file: build/rive.log
   problems: build/problems.log

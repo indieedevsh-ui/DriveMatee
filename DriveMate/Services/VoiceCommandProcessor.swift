@@ -18,27 +18,31 @@ enum VoiceCommandProcessor {
         let awaitFurtherInput: Bool
         /// Zamknij asystenta (np. „anuluj nasłuchiwanie”).
         let dismissAssistant: Bool
+        /// Spokojniejsze / wolniejsze TTS (np. „przeczytaj mi to”).
+        let calmSpeech: Bool
 
         init(
             reply: String,
             source: Source,
             didApplySideEffect: Bool,
             awaitFurtherInput: Bool = false,
-            dismissAssistant: Bool = false
+            dismissAssistant: Bool = false,
+            calmSpeech: Bool = false
         ) {
             self.reply = reply
             self.source = source
             self.didApplySideEffect = didApplySideEffect
             self.awaitFurtherInput = awaitFurtherInput
             self.dismissAssistant = dismissAssistant
+            self.calmSpeech = calmSpeech
         }
     }
 
     static func process(
         transcript: String,
-        toolSession: LanguageModelSession?,
-        understandingSession: LanguageModelSession?,
-        chatSession: LanguageModelSession?,
+        toolSession: Any?,
+        understandingSession: Any?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> Result {
         let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +106,54 @@ enum VoiceCommandProcessor {
             return gasResult
         }
 
+        // Powtórz zagadkę (przed nową / przed oceną odpowiedzi)
+        if DriveIntentParser.looksLikeRepeatPuzzle(cleaned)
+            || (DrivePuzzleService.shared.hasPuzzleToRepeat
+                && DriveIntentQueryHelpers.foldForMatching(cleaned).contains("powtorz")
+                && !DriveIntentQueryHelpers.foldForMatching(cleaned).contains("trase")) {
+            let answer = await DriveIntentExecutor.execute(.repeatPuzzle)
+            return Result(
+                reply: answer,
+                source: .localRouter,
+                didApplySideEffect: true,
+                awaitFurtherInput: DrivePuzzleService.shared.isAwaitingAnswer
+            )
+        }
+
+        // Nowa łamigówka — nawet gdy czekamy na odpowiedź do poprzedniej
+        if DriveIntentParser.looksLikePuzzleRequest(cleaned) {
+            DrivePuzzleService.shared.clear()
+            let cat = DrivePuzzleService.category(
+                fromFolded: DriveIntentQueryHelpers.foldForMatching(cleaned)
+            )
+            let answer = await DriveIntentExecutor.execute(.posePuzzle(categoryRaw: cat?.rawValue))
+            return Result(
+                reply: answer,
+                source: .localRouter,
+                didApplySideEffect: true,
+                awaitFurtherInput: DrivePuzzleService.shared.isAwaitingAnswer
+            )
+        }
+
+        // Odpowiedź na łamigówkę — zanim inne handlery przejmą wypowiedź
+        if DrivePuzzleService.shared.isAwaitingAnswer {
+            if let judge = await DrivePuzzleService.shared.judgeAnswer(cleaned) {
+                let reply: String = {
+                    switch judge {
+                    case .accept(let msg): return "Dobrze. \(msg)"
+                    case .reject(let msg): return "Nie tym razem. \(msg)"
+                    case .partial(let msg): return msg
+                    }
+                }()
+                return Result(
+                    reply: reply,
+                    source: .localRouter,
+                    didApplySideEffect: true,
+                    awaitFurtherInput: DrivePuzzleService.shared.isAwaitingAnswer
+                )
+            }
+        }
+
         // Czekamy na punkt startowy po samym celu
         if MapKitNavigationService.shared.pendingDestination != nil {
             let outcome = await DriveIntentExecutor.completePendingStart(fromReply: cleaned)
@@ -123,10 +175,12 @@ enum VoiceCommandProcessor {
 
         let folded = DriveIntentQueryHelpers.foldForMatching(cleaned)
         if DriveIntentParser.isNoiseOrFiller(folded) {
+            // Szum po „Hey Drive” — nie udawaj, że to nieznana funkcja.
             return Result(
-                reply: DriveIntentParser.unknownCommandReply,
+                reply: "Słucham — powiedz komendę, na przykład wyśrodkuj widok albo jedź do…",
                 source: .localRouter,
-                didApplySideEffect: false
+                didApplySideEffect: false,
+                awaitFurtherInput: true
             )
         }
 
@@ -152,72 +206,59 @@ enum VoiceCommandProcessor {
             }
         }
 
-        // CoreLM tylko dla wypowiedzi wyglądających na domenę Drive Mate — bez zgadywania.
         let inDomain = looksLikeMapCapability(cleaned) || looksLikeDriveDomain(folded)
-        if inDomain, modelReady, let understandingSession {
-            do {
-                let understood = try await CoreLM.understand(cleaned, session: understandingSession)
-                let minConfidence = minimumConfidence(for: understood.action)
-                if understood.confidence >= minConfidence,
-                   let intent = CoreLM.toDriveIntent(understood),
-                   isSafeIntent(intent, transcript: cleaned),
-                   !isHallucinatedSideEffect(intent, transcript: folded),
-                   let result = await fulfill(
-                       intent,
-                       originalTranscript: cleaned,
-                       chatSession: chatSession,
-                       source: .coreLM
-                   ) {
-                    return result
-                }
 
-                // Odpowiedź tekstowa TYLKO gdy model sam uznał pytanie za domenowe (answer),
-                // a nie gdy wciska navigate / findFood na losowe zdanie.
-                if understood.action == .answer || understood.action == .unsupported {
-                    let hint = understood.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if understood.action == .unsupported {
-                        return Result(
-                            reply: Self.shortRefusal(hint),
-                            source: .coreLM,
-                            didApplySideEffect: false
-                        )
-                    }
-                    if !hint.isEmpty {
-                        return Result(reply: Self.stripUnsolicitedSkills(hint), source: .coreLM, didApplySideEffect: false)
-                    }
-                }
+        // Ratunek: łamigówka (gdy parser lokalny coś przeoczył / ASR zniekształcił)
+        if DriveIntentParser.looksLikePuzzleRequest(cleaned)
+            || folded.contains("lamig") || folded.contains("zagadk") || folded.contains("puzzle") {
+            let cat = DrivePuzzleService.category(fromFolded: folded)
+            let answer = await DriveIntentExecutor.execute(.posePuzzle(categoryRaw: cat?.rawValue))
+            return Result(
+                reply: answer,
+                source: .localRouter,
+                didApplySideEffect: true,
+                awaitFurtherInput: true
+            )
+        }
 
-                // Ratunek tylko gdy wypada unsupported/none, a wypowiedź JEST z naszej domeny.
-                if understood.action == .unsupported || understood.action == .none {
-                    if let rescued = await rescueUnsupported(
-                        understood,
-                        transcript: cleaned,
-                        chatSession: chatSession,
-                        modelReady: modelReady
-                    ) {
-                        return rescued
-                    }
-                }
-            } catch {
-                // spadnij do odmowy
+        // Model deterministyczny — rozmowa / parafrazy offline (bez Foundation Models).
+        if AssistantModelPolicy.usesDeterministic {
+            if let det = DeterministicBrainEngine.shared.replyToChat(cleaned), !det.isEmpty {
+                return Result(reply: det, source: .localRouter, didApplySideEffect: false)
+            }
+            if let semantic = DriveIntentParser.semanticFallback(cleaned),
+               let result = await fulfill(
+                   semantic,
+                   originalTranscript: cleaned,
+                   chatSession: chatSession,
+                   source: .localRouter
+               ) {
+                return result
+            }
+            return Result(
+                reply: DriveIntentParser.unknownCommandReply,
+                source: .localRouter,
+                didApplySideEffect: false
+            )
+        }
+
+        if AssistantModelPolicy.usesFoundationModels, #available(iOS 26.0, *) {
+            if let foundationResult = await processWithFoundationModels(
+                cleaned: cleaned,
+                folded: folded,
+                inDomain: inDomain,
+                toolSession: toolSession,
+                understandingSession: understandingSession,
+                chatSession: chatSession,
+                modelReady: modelReady
+            ) {
+                return foundationResult
             }
         }
 
-        // Narzędzia mapy — wyłącznie przy wyraźnym zapytaniu mapowym (nie przy „yhm”).
-        if inDomain, modelReady, let toolSession, looksLikeMapCapability(cleaned) {
-            do {
-                let response = try await toolSession.respond(to: foundationPrompt(for: cleaned))
-                let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    let awaiting = MapKitNavigationService.shared.pendingDestination != nil
-                    return Result(
-                        reply: text,
-                        source: .foundationModel,
-                        didApplySideEffect: false,
-                        awaitFurtherInput: awaiting
-                    )
-                }
-            } catch { /* spadnij dalej */ }
+        // Fallback deterministyczny nawet przy Foundation, gdy model nie odpowiedział.
+        if let det = DeterministicBrainEngine.shared.replyToChat(cleaned), !det.isEmpty {
+            return Result(reply: det, source: .localRouter, didApplySideEffect: false)
         }
 
         // Poza domeną / nierozpoznane — uczciwa odmowa, bez czatu zgadującego akcje.
@@ -228,107 +269,12 @@ enum VoiceCommandProcessor {
         )
     }
 
-    /// CoreLM potrafi odmówić czegoś, co Drive Mate umie — wolimy wykonać, niż odmówić.
-    ///
-    /// Dotyczy przede wszystkim paliwa i ulicy: wcześniej pytanie o zasięg albo o obecną
-    /// ulicę kończyło się „nie umiem tego zrobić”, mimo że dane były dostępne.
-private static func rescueUnsupported(
-            _ understood: CoreLM.UnderstoodCommand,
-            transcript: String,
-            chatSession: LanguageModelSession?,
-            modelReady: Bool
-        ) async -> Result? {
-            guard modelReady, let chatSession else { return nil }
-
-            // Bezpiecznik: nie każde niezrozumiane zdanie należy do naszej domeny.
-            // Gdyby model wciskał akcję wypowiedzi typu „zadzwoń do mamy”, wykonalibyśmy
-            // cudzą komendę — gorsze niż uczciwe „nie umiem”. Ratujemy tylko wtedy,
-            // gdy wypowiedź wygląda na prośbę o dane z mapy / paliwa.
-            guard looksLikeMapCapability(transcript) else { return nil }
-
-            let known: [(action: CoreLM.UnderstoodCommand.Action, label: String)] = [
-                (.fuelCost, "koszt paliwa na trasie"),
-                (.fuelLevel, "poziom paliwa w baku"),
-                (.fuelRange, "zasięg auta na obecnym paliwie"),
-                (.nearestFuel, "najbliższa stacja paliw"),
-                (.cheapestFuel, "stacja paliw pod kątem ceny"),
-                (.streetInfo, "informacje o ulicy"),
-                (.streetHistory, "historia ulicy"),
-                (.whereAmI, "aktualny adres i ulica"),
-                (.traffic, "ocena korków"),
-                (.findFood, "najbliższa restauracja"),
-                (.speedLimit, "limit prędkości"),
-                (.navigate, "nawigacja do miejsca"),
-                (.recenterMap, "wyśrodkowanie widoku mapy"),
-                (.showCapabilities, "lista umiejętności Drive Mate"),
-                (.musicPause, "sterowanie muzyką"),
-                (.musicResume, "wznowienie muzyki"),
-                (.musicNext, "następny utwór"),
-                (.musicPrevious, "poprzedni utwór")
-            ]
-
-            // Dotąd lista możliwości była budowana przez `known.filter { $0.action == understood.action }`,
-            // co dla `.unsupported` dawało pustą listę (brak odmiany `unsupported` w `known`),
-            // a dla `.none` — listę WSZYSTKICH możliwości, po czym model był i tak
-            // zmuszany do ponownego wypełnienia `.none`. Efekt: ratunek nigdy nie zadziałał.
-            //
-            // Teraz prosimy model o WYBRANIE jednej możliwości i wymuszamy TĘ akcję.
-            let options = known.map(\.label).joined(separator: ", ")
-            let pick = (try? await CoreLM.honestReply(
-                to: """
-                Kierowca powiedział: „\(transcript)”.
-                Nie rozpoznałeś tego polecenia. Wybierz JEDNĄ pozycję z listy, która najbliżej pasuje do intencji kierowcy, i odpowiedz TYLKO jej nazwą, bez wyjaśnień:
-                \(options)
-
-                Jeśli żadna nie pasuje, odpowiedz dokładnie: NIC
-                """,
-                session: chatSession
-            ))?
-                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-                .lowercased() ?? ""
-
-            guard !pick.isEmpty, pick != "nic" else { return nil }
-
-            // Dopasuj odpowiedź z powrotem do akcji (model może skrócić etykietę).
-            let matched = known.first { entry in
-                pick.contains(entry.label)
-                    || entry.label.contains(pick)
-                    || pick.contains(String(entry.label.prefix(12)))
-            }
-
-            guard let chosen = matched else { return nil }
-
-            // Wymuś wybraną akcję i niech model wypełni sloty.
-            if let session = CoreLM.makeUnderstandingSession(),
-               let retried = try? await CoreLM.understandForcedAction(
-                   chosen.action,
-                   transcript: transcript,
-                   session: session
-               ),
-               let intent = CoreLM.toDriveIntent(retried),
-               let result = await fulfill(
-                   intent,
-                   originalTranscript: transcript,
-                   chatSession: chatSession,
-                   source: .coreLM
-               ) {
-                return result
-            }
-
-            // Nie udało się wypełnić slotów — krótka odmowa, bez katalogu umiejętności.
-            return Result(
-                reply: DriveIntentParser.unknownCommandReply,
-                source: .coreLM,
-                didApplySideEffect: false
-            )
-        }
-
     // MARK: - Fulfill
 
     private static func fulfill(
         _ intent: DriveIntent,
         originalTranscript: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         source: Source
     ) async -> Result? {
         switch intent {
@@ -336,13 +282,14 @@ private static func rescueUnsupported(
             if !hint.isEmpty {
                 return Result(reply: hint, source: source, didApplySideEffect: false)
             }
-            if let chatSession {
-                do {
-                    let text = try await CoreLM.honestReply(to: originalTranscript, session: chatSession)
-                    if !text.isEmpty {
-                        return Result(reply: text, source: .foundationModel, didApplySideEffect: false)
-                    }
-                } catch { /* ignore */ }
+            if let det = DeterministicBrainEngine.shared.replyToChat(originalTranscript), !det.isEmpty {
+                return Result(reply: det, source: .localRouter, didApplySideEffect: false)
+            }
+            if AssistantModelPolicy.usesFoundationModels, #available(iOS 26.0, *) {
+                if let text = await chatHonestReply(chatSession: chatSession, transcript: originalTranscript),
+                   !text.isEmpty {
+                    return Result(reply: text, source: .foundationModel, didApplySideEffect: false)
+                }
             }
             return Result(
                 reply: "Nie jestem pewien, o co chodzi. Mogę pomóc w trasie, korkach, ulicy, paliwie albo restauracji.",
@@ -386,16 +333,31 @@ private static func rescueUnsupported(
                 if case .nearestFuel = intent { return GasStationOfferService.shared.isActive }
                 return false
             }()
+            let awaitingPuzzle: Bool = {
+                switch intent {
+                case .posePuzzle, .repeatPuzzle:
+                    return DrivePuzzleService.shared.isAwaitingAnswer
+                default: return false
+                }
+            }()
             let startedNav: Bool = {
                 if case .navigate(_, let start) = intent { return start != nil && !awaitingStart }
                 return false
+            }()
+
+            let isCalm = {
+                switch intent {
+                case .readVisibleTile, .nextTurnInfo: return true
+                default: return false
+                }
             }()
 
             return Result(
                 reply: answer,
                 source: source,
                 didApplySideEffect: isSideEffectIntent(intent) && (startedNav || (!awaitingStart && !awaitingFood && !awaitingStore && !awaitingGas) || intentNeedsSideEffect(intent)),
-                awaitFurtherInput: awaitingStart || awaitingFood || awaitingStore || awaitingGas
+                awaitFurtherInput: awaitingStart || awaitingFood || awaitingStore || awaitingGas || awaitingPuzzle,
+                calmSpeech: isCalm
             )
         }
     }
@@ -404,7 +366,10 @@ private static func rescueUnsupported(
         switch intent {
         case .cancelRoute, .restoreInterruptedRoute, .music, .nearestFuel,
              .findNearestStore, .navigateToPastVisit, .recenterMap, .showCapabilities,
-             .tellTrivia:
+             .setTilesTransparency, .readVisibleTile, .nextTurnInfo, .preferManeuver,
+             .savePlace, .promptSavePlaceName, .downloadOfflineMaps,
+             .setRecording, .setVolume, .setTravelMode, .setOverlayMode, .tellTrivia,
+             .remainingTravelTime, .posePuzzle, .repeatPuzzle:
             return true
         default: return false
         }
@@ -413,30 +378,16 @@ private static func rescueUnsupported(
     private static func isSideEffectIntent(_ intent: DriveIntent) -> Bool {
         switch intent {
         case .navigate, .traffic, .streetInfo, .streetHistory, .findFood, .findNearestStore,
-             .tellTrivia, .cancelRoute, .restoreInterruptedRoute, .music, .speedLimit, .fuelCost,
-             .fuelLevel, .fuelRange, .nearestFuel, .setCarModel, .whereAmI,
-             .navigateToPastVisit, .setChromeTile, .recenterMap, .showCapabilities:
+             .tellTrivia, .remainingTravelTime, .posePuzzle, .repeatPuzzle, .cancelRoute, .restoreInterruptedRoute,
+             .music, .speedLimit, .nextTurnInfo,
+             .preferManeuver,
+             .fuelCost, .fuelLevel, .fuelRange, .nearestFuel, .setCarModel, .whereAmI,
+             .navigateToPastVisit, .setChromeTile, .setTilesTransparency, .readVisibleTile,
+             .recenterMap, .setRecording, .setVolume, .setTravelMode, .setOverlayMode,
+             .showCapabilities, .savePlace, .promptSavePlaceName, .downloadOfflineMaps:
             return true
         case .cancelListening, .answer, .unsupported, .unknown:
             return false
-        }
-    }
-
-    private static func minimumConfidence(for action: CoreLM.UnderstoodCommand.Action) -> Double {
-        switch action {
-        case .navigate, .pastVisit:
-            return 0.72
-        case .recenterMap, .showCapabilities, .chromeHide, .chromeShow,
-             .musicPause, .musicResume, .musicNext, .musicPrevious,
-             .cancelListening, .cancelRoute:
-            return 0.45
-        case .fuelCost, .fuelLevel, .fuelRange, .nearestFuel, .cheapestFuel,
-             .whereAmI, .streetInfo, .streetHistory:
-            return 0.55
-        case .answer, .unsupported, .none:
-            return 0.5
-        default:
-            return 0.6
         }
     }
 
@@ -454,10 +405,14 @@ private static func rescueUnsupported(
             let uiHints = ["wysrodk", "centruj", "centrow", "ukryj kafelek", "pokaz kafelek"]
             if uiHints.contains(where: { lower.contains($0) }) { return false }
             // Nawigacja wymaga czasownika / prefiksu trasy — nie „yhm” ani luźne pytanie.
+            // Wyjątek: samo „dom” / „praca” / zapisane miejsce.
+            if SavedPlacesStore.shared.resolve(spokenQuery: destination) != nil {
+                return true
+            }
             let navHints = [
                 "jedz", "nawig", "trasa", "trase", "zaprowadz", "zabierz", "dojazd",
-                "dotrzec", "dojechac", "prowadz", "pokieruj", "kieruj", "wez mnie",
-                "go to", "take me", "navigate", "drive to"
+                "dotrzec", "dojechac", "poprowadz", "prowadz", "pokieruj", "kieruj", "wez mnie",
+                "go to", "take me", "navigate", "drive to", "route me"
             ]
             guard navHints.contains(where: { lower.contains($0) })
                     || lower.hasPrefix("do ") || lower.hasPrefix("na ") else {
@@ -507,11 +462,15 @@ private static func rescueUnsupported(
         let keys = [
             "jedz", "trasa", "trase", "nawig", "kork", "ulic", "restaur", "glod",
             "paliw", "stacj", "tankow", "muzyk", "utwor", "piosenk", "adres",
-            "gdzie jestem", "wysrodk", "centruj", "potrafisz", "umiesz", "dowiez",
+            "gdzie jestem", "wysrodk", "srodk", "centruj", "centrow", "potrafisz", "umiesz", "dowiez",
             "zasieg", "ile mam", "co to za", "historia", "zakoncz", "anuluj",
             "przywróc", "przywroc", "pauza", "nastepn", "poprzedn",
             "zabka", "lewiatan", "empik", "sinsay", "biedronk", "sklep",
-            "ciekawostk", "cos ciekawego"
+            "ciekawostk", "cos ciekawego", "nagryw", "glosn", "kompas", " tryb ar",
+            "rowerow", "samochodow",
+            "skrec", "skret", "rondo", "skrzyz", "nastepny skret", "kolejny skret",
+            "moj dom", "moja praca", "zapamietaj", "tutaj jest", "tu jest",
+            "lamigow", "zagadk", "ile jeszcze", "ile czasu", "do konca trasy", "eta"
         ]
         return keys.contains(where: { lower.contains($0) })
     }
@@ -545,7 +504,7 @@ private static func rescueUnsupported(
 
     private static func handleArrivalConfirmReply(
         _ text: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> Result? {
         let arrival = ArrivalConfirmService.shared
@@ -605,7 +564,7 @@ private static func rescueUnsupported(
 
     private static func handleStoreOfferReply(
         _ text: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> Result? {
         let offer = StoreOfferService.shared
@@ -655,7 +614,7 @@ private static func rescueUnsupported(
 
     private static func handleRestaurantOfferReply(
         _ text: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> Result? {
         let offer = RestaurantOfferService.shared
@@ -704,7 +663,7 @@ private static func rescueUnsupported(
 
     private static func handleGasStationOfferReply(
         _ text: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> Result? {
         let offer = GasStationOfferService.shared
@@ -758,34 +717,18 @@ private static func rescueUnsupported(
     private static func resolveOfferDecision(
         text: String,
         lower: String,
-        chatSession: LanguageModelSession?,
+        chatSession: Any?,
         modelReady: Bool
     ) async -> OfferDecision {
         if isCancelPhrase(lower) { return .cancel }
         if isConfirmPhrase(lower) { return .confirm }
 
-        // Naturalna mowa — lekka klasyfikacja CoreLM gdy lokalne frazy nie złapały
-        if modelReady, let chatSession {
-            do {
-                let label = try await CoreLM.honestReply(
-                    to: """
-                    Kierowca odpowiada na pytanie „czy jedziemy do zaproponowanego miejsca?”.
-                    Jego wypowiedź: „\(text)”
-                    Odpowiedz JEDNYM słowem dokładnie: TAK albo NIE albo NIEJASNE.
-                    TAK = zgoda / spoko / jedźmy / pasuje / dobra.
-                    NIE = anuluj / odpuść / nie chcę / zostaw.
-                    """,
-                    session: chatSession
-                )
-                let n = label
-                    .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-                    .lowercased()
-                if n == "tak" || n.hasPrefix("tak ") { return .confirm }
-                if n == "nie" || n.hasPrefix("nie ") { return .cancel }
-                if n.contains("niejasne") { return .unclear }
-                if n.contains("tak") { return .confirm }
-                if n == "nie" || (n.contains("nie") && !n.contains("niejas")) { return .cancel }
-            } catch { /* spadnij do unclear */ }
+        if #available(iOS 26.0, *) {
+            return await resolveOfferDecisionWithModel(
+                text: text,
+                chatSession: chatSession,
+                modelReady: modelReady
+            )
         }
         return .unclear
     }
@@ -870,6 +813,9 @@ private static func rescueUnsupported(
             "bak", "bakie", "zuzy", "zasieg", "dowioze", "dowieziesz", "dojade",
             "rezerw", "adres", "lokalizacj", "gdzie jestem", "kod pocztowy",
             "miast", "powiat", "gmina", "skrzyz", "rondo", "osiedl", "dzielnic",
+            "skrec", "skret", "nastepny skret", "kolejny skret", "manewr",
+            "moj dom", "moja praca", "zapamietaj", "tutaj jest", "tu jest",
+            "lamigow", "zagadk", "ile jeszcze", "ile czasu", "eta", "do konca",
             // Parafrazy bez nazwy paliwa — „dowieziesz mnie”, „jak daleko dojadę”
             "starcz", "wystarcz", "zasieg", "litrow", "poziom", "bak ",
             "adres", "ulica", "historyczna", "charakterystyka"
@@ -892,5 +838,251 @@ private static func rescueUnsupported(
         Przy odmowie: jedno krótkie zdanie, BEZ wymieniania co umiesz.
         Odpowiedź po polsku, 1–2 zdania.
         """
+    }
+}
+
+// MARK: - Foundation Models (iOS 26+)
+
+@available(iOS 26.0, *)
+extension VoiceCommandProcessor {
+    static func processWithFoundationModels(
+        cleaned: String,
+        folded: String,
+        inDomain: Bool,
+        toolSession: Any?,
+        understandingSession: Any?,
+        chatSession: Any?,
+        modelReady: Bool
+    ) async -> Result? {
+        guard modelReady else { return nil }
+
+        // CoreLM tylko dla wypowiedzi wyglądających na domenę Drive Mate — bez zgadywania.
+        if inDomain,
+           let understandingSession = understandingSession as? LanguageModelSession {
+            do {
+                let understood = try await CoreLM.understand(cleaned, session: understandingSession)
+                let minConfidence = minimumConfidence(for: understood.action)
+                if understood.confidence >= minConfidence,
+                   let intent = CoreLM.toDriveIntent(understood),
+                   isSafeIntent(intent, transcript: cleaned),
+                   !isHallucinatedSideEffect(intent, transcript: folded),
+                   let result = await fulfill(
+                       intent,
+                       originalTranscript: cleaned,
+                       chatSession: chatSession,
+                       source: .coreLM
+                   ) {
+                    return result
+                }
+
+                if understood.action == .answer || understood.action == .unsupported {
+                    let hint = understood.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if understood.action == .unsupported {
+                        return Result(
+                            reply: Self.shortRefusal(hint),
+                            source: .coreLM,
+                            didApplySideEffect: false
+                        )
+                    }
+                    if !hint.isEmpty {
+                        return Result(reply: Self.stripUnsolicitedSkills(hint), source: .coreLM, didApplySideEffect: false)
+                    }
+                }
+
+                if understood.action == .unsupported || understood.action == .none {
+                    if let rescued = await rescueUnsupported(
+                        understood,
+                        transcript: cleaned,
+                        chatSession: chatSession,
+                        modelReady: modelReady
+                    ) {
+                        return rescued
+                    }
+                }
+            } catch {
+                // spadnij do narzędzi / odmowy
+            }
+        }
+
+        if inDomain,
+           let toolSession = toolSession as? LanguageModelSession,
+           looksLikeMapCapability(cleaned) {
+            do {
+                let response = try await toolSession.respond(to: foundationPrompt(for: cleaned))
+                let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    let awaiting = MapKitNavigationService.shared.pendingDestination != nil
+                    return Result(
+                        reply: text,
+                        source: .foundationModel,
+                        didApplySideEffect: false,
+                        awaitFurtherInput: awaiting
+                    )
+                }
+            } catch { /* spadnij dalej */ }
+        }
+
+        return nil
+    }
+
+    /// CoreLM potrafi odmówić czegoś, co Drive Mate umie — wolimy wykonać, niż odmówić.
+    static func rescueUnsupported(
+        _ understood: CoreLM.UnderstoodCommand,
+        transcript: String,
+        chatSession: Any?,
+        modelReady: Bool
+    ) async -> Result? {
+        guard modelReady, let chatSession = chatSession as? LanguageModelSession else { return nil }
+        guard looksLikeMapCapability(transcript) else { return nil }
+
+        let known: [(action: CoreLM.UnderstoodCommand.Action, label: String)] = [
+            (.fuelCost, "koszt paliwa na trasie"),
+            (.fuelLevel, "poziom paliwa w baku"),
+            (.fuelRange, "zasięg auta na obecnym paliwie"),
+            (.nearestFuel, "najbliższa stacja paliw"),
+            (.cheapestFuel, "stacja paliw pod kątem ceny"),
+            (.streetInfo, "informacje o ulicy"),
+            (.streetHistory, "historia ulicy"),
+            (.whereAmI, "aktualny adres i ulica"),
+            (.remainingTravelTime, "ile czasu zostało do celu"),
+            (.posePuzzle, "łamigówka lub zagadka"),
+            (.posePuzzle, "łamigłówka"),
+            (.posePuzzle, "daj zagadkę"),
+            (.posePuzzle, "puzzle"),
+            (.repeatPuzzle, "powtórz zagadkę"),
+            (.repeatPuzzle, "powtórz łamigówkę"),
+            (.traffic, "ocena korków"),
+            (.findFood, "najbliższa restauracja"),
+            (.speedLimit, "limit prędkości"),
+            (.nextTurnInfo, "kiedy i gdzie skręcić"),
+            (.saveHome, "zapisanie domu"),
+            (.saveWork, "zapisanie pracy"),
+            (.updateHome, "zmiana lokalizacji domu"),
+            (.updateWork, "zmiana lokalizacji pracy"),
+            (.saveNamedPlace, "zapisanie własnego miejsca"),
+            (.navigate, "nawigacja do miejsca"),
+            (.recenterMap, "wyśrodkowanie widoku mapy"),
+            (.showCapabilities, "lista umiejętności Drive Mate"),
+            (.tilesMoreTransparent, "zwiększenie przezroczystości kafelków"),
+            (.tilesLessTransparent, "zmniejszenie przezroczystości kafelków"),
+            (.readVisibleTile, "odczytanie widocznego kafelka"),
+            (.recordingOn, "włączenie nagrywania"),
+            (.recordingOff, "wyłączenie nagrywania"),
+            (.setVolume, "zmiana głośności aplikacji"),
+            (.travelModeCar, "tryb samochodowy"),
+            (.travelModeBike, "tryb rowerowy"),
+            (.arOn, "włączenie trybu AR"),
+            (.arOff, "wyłączenie trybu AR"),
+            (.compassOn, "włączenie kompasu"),
+            (.compassOff, "wyłączenie kompasu"),
+            (.musicPause, "sterowanie muzyką"),
+            (.musicResume, "wznowienie muzyki"),
+            (.musicNext, "następny utwór"),
+            (.musicPrevious, "poprzedni utwór")
+        ]
+
+        let options = known.map(\.label).joined(separator: ", ")
+        let pick = (try? await CoreLM.honestReply(
+            to: """
+            Kierowca powiedział: „\(transcript)”.
+            Nie rozpoznałeś tego polecenia. Wybierz JEDNĄ pozycję z listy, która najbliżej pasuje do intencji kierowcy, i odpowiedz TYLKO jej nazwą, bez wyjaśnień:
+            \(options)
+
+            Jeśli żadna nie pasuje, odpowiedz dokładnie: NIC
+            """,
+            session: chatSession
+        ))?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .lowercased() ?? ""
+
+        guard !pick.isEmpty, pick != "nic" else { return nil }
+
+        let matched = known.first { entry in
+            pick.contains(entry.label)
+                || entry.label.contains(pick)
+                || pick.contains(String(entry.label.prefix(12)))
+        }
+
+        guard let chosen = matched else { return nil }
+
+        if let session = CoreLM.makeUnderstandingSession(),
+           let retried = try? await CoreLM.understandForcedAction(
+               chosen.action,
+               transcript: transcript,
+               session: session
+           ),
+           let intent = CoreLM.toDriveIntent(retried),
+           let result = await fulfill(
+               intent,
+               originalTranscript: transcript,
+               chatSession: chatSession,
+               source: .coreLM
+           ) {
+            return result
+        }
+
+        return Result(
+            reply: DriveIntentParser.unknownCommandReply,
+            source: .coreLM,
+            didApplySideEffect: false
+        )
+    }
+
+    static func minimumConfidence(for action: CoreLM.UnderstoodCommand.Action) -> Double {
+        switch action {
+        case .navigate, .pastVisit:
+            return 0.72
+        case .recenterMap, .showCapabilities, .chromeHide, .chromeShow,
+             .tilesMoreTransparent, .tilesLessTransparent, .readVisibleTile, .nextTurnInfo,
+             .saveHome, .saveWork, .updateHome, .updateWork, .saveNamedPlace,
+             .recordingOn, .recordingOff, .setVolume, .travelModeCar, .travelModeBike,
+             .arOn, .arOff, .compassOn, .compassOff,
+             .musicPause, .musicResume, .musicNext, .musicPrevious,
+             .cancelListening, .cancelRoute:
+            return 0.45
+        case .fuelCost, .fuelLevel, .fuelRange, .nearestFuel, .cheapestFuel,
+             .whereAmI, .streetInfo, .streetHistory, .remainingTravelTime, .posePuzzle, .repeatPuzzle:
+            return 0.55
+        case .answer, .unsupported, .none:
+            return 0.5
+        default:
+            return 0.6
+        }
+    }
+
+    static func chatHonestReply(chatSession: Any?, transcript: String) async -> String? {
+        guard let chatSession = chatSession as? LanguageModelSession else { return nil }
+        return try? await CoreLM.honestReply(to: transcript, session: chatSession)
+    }
+
+    private static func resolveOfferDecisionWithModel(
+        text: String,
+        chatSession: Any?,
+        modelReady: Bool
+    ) async -> OfferDecision {
+        guard modelReady, let chatSession = chatSession as? LanguageModelSession else {
+            return .unclear
+        }
+        do {
+            let label = try await CoreLM.honestReply(
+                to: """
+                Kierowca odpowiada na pytanie „czy jedziemy do zaproponowanego miejsca?”.
+                Jego wypowiedź: „\(text)”
+                Odpowiedz JEDNYM słowem dokładnie: TAK albo NIE albo NIEJASNE.
+                TAK = zgoda / spoko / jedźmy / pasuje / dobra.
+                NIE = anuluj / odpuść / nie chcę / zostaw.
+                """,
+                session: chatSession
+            )
+            let n = label
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                .lowercased()
+            if n == "tak" || n.hasPrefix("tak ") { return .confirm }
+            if n == "nie" || n.hasPrefix("nie ") { return .cancel }
+            if n.contains("niejasne") { return .unclear }
+            if n.contains("tak") { return .confirm }
+            if n == "nie" || (n.contains("nie") && !n.contains("niejas")) { return .cancel }
+        } catch { /* spadnij do unclear */ }
+        return .unclear
     }
 }

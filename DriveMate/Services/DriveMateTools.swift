@@ -6,6 +6,7 @@ import NaturalLanguage
 
 // MARK: - Tools (Foundation Models + MapKit / NaturalLanguage)
 
+@available(iOS 26.0, *)
 struct FindPlaceTool: Tool {
     let name = "findPlace"
     let description = """
@@ -39,6 +40,7 @@ struct FindPlaceTool: Tool {
     }
 }
 
+@available(iOS 26.0, *)
 struct PlanBestRouteTool: Tool {
     let name = "planBestRoute"
     let description = """
@@ -101,6 +103,7 @@ struct PlanBestRouteTool: Tool {
     }
 }
 
+@available(iOS 26.0, *)
 struct TrafficRiskTool: Tool {
     let name = "assessTrafficRisk"
     let description = """
@@ -153,6 +156,7 @@ struct TrafficRiskTool: Tool {
     }
 }
 
+@available(iOS 26.0, *)
 struct StreetInsightTool: Tool {
     let name = "streetInsight"
     let description = """

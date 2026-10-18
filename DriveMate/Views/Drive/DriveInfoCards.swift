@@ -96,7 +96,7 @@ struct PlaceOfferCard: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .liquidGlassCapsule(.clear.interactive())
+                        .driveTileGlassCapsule(interactive: true)
                         .overlay { Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.9) }
                 }
                 .buttonStyle(.plain)
@@ -118,7 +118,7 @@ struct PlaceOfferCard: View {
         }
         .frame(maxWidth: 420)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .liquidGlassRect(cornerRadius: 24, .clear)
+        .driveTileGlassRect(cornerRadius: 24)
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.18), lineWidth: 1)
@@ -306,11 +306,39 @@ struct DriveInfoCardPopup: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
+
+            case let .puzzle(category, prompt):
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Łamigówka")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Spacer(minLength: 8)
+                        Text("Czytam…")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+
+                    Text(category.uppercased())
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(DriveMatePalette.limeRoute)
+
+                    Text(prompt)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Odpowiedź na głos · „nie wiem” = podpowiedź · „powtórz zagadkę”")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.42))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(18)
             }
         }
         .frame(maxWidth: 420)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .liquidGlassRect(cornerRadius: 24, .clear)
+        .driveTileGlassRect(cornerRadius: 24)
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.18), lineWidth: 1)

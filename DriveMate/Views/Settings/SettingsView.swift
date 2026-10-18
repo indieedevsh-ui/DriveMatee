@@ -23,7 +23,7 @@ struct NeonSlider: View {
 
                 Color.clear
                     .frame(width: thumbWidth, height: 28)
-                    .liquidGlassCapsule(.clear.interactive())
+                    .liquidGlassCapsule(.clear, interactive: true)
                     .overlay {
                         Capsule().stroke(Color.white.opacity(0.4), lineWidth: 1)
                     }
@@ -157,6 +157,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     driveMateEntryCard
+                    nfcTagCard
                     soundCard
                     autoMuteCard
                     alwaysUseMyLocationCard
@@ -256,6 +257,43 @@ struct SettingsView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private var nfcTagCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("TAG NFC")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .modifier(SettingsPrimaryText())
+                Text("Raz zapisz tryb na tagu (krótki skan). Potem każde przybliżenie włącza tryb bez „Ready to Scan”.")
+                    .font(.system(size: 13, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    MechanicalClickSound.play()
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                        NFCModeService.shared.promptEncodeWithoutScan()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "wave.3.right.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                        Text(NFCModeService.shared.isAvailable ? "Skonfiguruj tag NFC" : "NFC niedostępne")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.black.opacity(0.88))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(DriveMatePalette.limeRoute.opacity(NFCModeService.shared.isAvailable ? 1 : 0.35))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!NFCModeService.shared.isAvailable)
+            }
+        }
     }
 
     private var soundCard: some View {

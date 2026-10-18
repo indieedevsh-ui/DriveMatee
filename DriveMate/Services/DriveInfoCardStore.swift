@@ -25,11 +25,14 @@ enum DriveInfoCard: Equatable {
     )
     /// Lista umiejętności — zamyka się po 10 s albo po „Zamknij”.
     case capabilities(items: [String])
+    /// Łamigówka — zostaje na ekranie do końca czytania TTS.
+    case puzzle(category: String, prompt: String)
 
-    /// Karty zamykane po TTS + 1.5 s (nie dotyczy okienka umiejętności).
+    /// Karty zamykane po TTS + krótka pauza (umiejętności mają własny timer 10 s).
     var autoDismissesAfterSpeech: Bool {
         switch self {
         case .capabilities: return false
+        case .puzzle: return true
         default: return true
         }
     }
@@ -46,6 +49,8 @@ enum DriveInfoCard: Equatable {
             return p1 == p2 && l1 == l2 && t1 == t2 && r1 == r2
         case let (.capabilities(a), .capabilities(b)):
             return a == b
+        case let (.puzzle(c1, p1), .puzzle(c2, p2)):
+            return c1 == c2 && p1 == p2
         default:
             return false
         }
@@ -58,6 +63,8 @@ final class DriveInfoCardStore: ObservableObject {
 
     @Published private(set) var card: DriveInfoCard?
     private var dismissTask: Task<Void, Never>?
+    /// Po „przeczytaj mi to” — nie zamykaj karty, aż TTS skończy (także umiejętności).
+    private var heldForReading = false
 
     var isActive: Bool { card != nil }
 
@@ -68,12 +75,17 @@ final class DriveInfoCardStore: ObservableObject {
 
     func present(_ card: DriveInfoCard) {
         dismissTask?.cancel()
+        heldForReading = false
         withAnimationOptional {
             self.card = card
         }
         // Okienko umiejętności: stałe 10 s, niezależnie od TTS.
         if case .capabilities = card {
             scheduleTimedDismiss(afterSeconds: 10)
+        }
+        // Łamigówka: trzymaj do końca czytania (dismiss po TTS w scheduleDismissAfterSpeech).
+        if case .puzzle = card {
+            holdForReading()
         }
     }
 
@@ -83,17 +95,39 @@ final class DriveInfoCardStore: ObservableObject {
         card = .street(title: title, body: body, image: image)
     }
 
+    /// Zatrzymaj auto-zamykanie — kafelek zostaje, aż Drive spokojnie przeczyta.
+    func holdForReading() {
+        guard card != nil else { return }
+        dismissTask?.cancel()
+        dismissTask = nil
+        heldForReading = true
+    }
+
     func dismiss() {
         dismissTask?.cancel()
         dismissTask = nil
+        heldForReading = false
         withAnimationOptional {
             card = nil
         }
     }
 
-    /// Wywołaj po zakończeniu TTS — zamyka kartę po 1.5 s (nie umiejętności).
+    /// Wywołaj po zakończeniu TTS — zamyka kartę po krótkiej pauzie.
     func scheduleDismissAfterSpeech(delaySeconds: Double = 1.5) {
-        guard let card, card.autoDismissesAfterSpeech else { return }
+        guard let card else { return }
+        if case .puzzle = card {
+            heldForReading = false
+            // Zaraz po przeczytaniu łamigówki — krótka pauza i zniknięcie.
+            scheduleTimedDismiss(afterSeconds: max(0.6, min(delaySeconds, 1.2)))
+            return
+        }
+        if heldForReading {
+            heldForReading = false
+            // Po czytaniu: dłuższa pauza, żeby kierowca zdążył jeszcze spojrzeć.
+            scheduleTimedDismiss(afterSeconds: max(delaySeconds, 2.2))
+            return
+        }
+        guard card.autoDismissesAfterSpeech else { return }
         scheduleTimedDismiss(afterSeconds: delaySeconds)
     }
 

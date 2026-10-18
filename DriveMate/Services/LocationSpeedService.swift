@@ -7,6 +7,8 @@ final class LocationSpeedService: NSObject, ObservableObject {
     @Published private(set) var speedKmh: Int = 0
     @Published private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published private(set) var coordinate: CLLocationCoordinate2D?
+    /// Wysokość GPS (m n.p.m.) — m.in. Stats w trybie rowerowym.
+    @Published private(set) var altitudeMeters: Double = 0
     /// Czy użytkownik jest w ruchu (na podstawie GPS).
     @Published private(set) var isMoving = false
 
@@ -169,6 +171,12 @@ extension LocationSpeedService: CLLocationManagerDelegate {
             lastSpeedPublish = display
             speedKmh = display
         }
+
+        if location.verticalAccuracy >= 0, location.altitude.isFinite {
+            altitudeMeters = location.altitude
+        }
+
+        BikeRideStatsService.shared.ingest(location: location, displayedSpeedKmh: speedKmh)
 
         lastLocationForDelta = location
     }

@@ -8,6 +8,7 @@ struct DriveARNavView: View {
     /// Symbol przypomnienia na skrzyżowaniu (znika po 5 s).
     var intersectionReminder: TurnDirection?
     var leadingChrome: CGFloat = 168
+    var bottomChrome: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -48,6 +49,7 @@ struct DriveARNavView: View {
                 intersectionReminder: intersectionReminder
             )
             .padding(.leading, leadingChrome * 0.15)
+            .padding(.bottom, bottomChrome * 0.35)
         }
     }
 }
@@ -114,7 +116,7 @@ struct ARTurnSymbolOverlay: View {
         .background {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(Color.black.opacity(0.42))
-                .liquidGlassRect(cornerRadius: 28, .clear)
+                .driveTileGlassRect(cornerRadius: 28)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -156,7 +158,7 @@ struct ARNavButton: View {
                 .background {
                     Circle()
                         .fill(Color.black.opacity(isLight ? 0.14 : (isActive ? 0.35 : 0)))
-                        .liquidGlassCircle(.clear.interactive())
+                        .driveTileGlassCircle(interactive: true)
                 }
                 .overlay {
                     Circle().stroke(

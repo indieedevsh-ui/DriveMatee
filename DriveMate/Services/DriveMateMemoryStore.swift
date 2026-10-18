@@ -249,6 +249,51 @@ final class DriveMateMemoryStore: ObservableObject {
         persistAvoidances()
     }
 
+    /// Głosowa preferencja manewru („jedź prosto”) — zapamiętaj via pod kolejne trasy do tego celu.
+    func recordSpokenManeuverPreference(
+        destinationTitle: String,
+        destination: CLLocationCoordinate2D,
+        via: CLLocationCoordinate2D,
+        avoidedStreetHint: String?
+    ) {
+        let raw = avoidedStreetHint?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: ",")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let street = (raw?.count ?? 0) >= 3 ? raw! : "preferowany kierunek"
+        let samples: [[Double]] = [
+            [via.latitude, via.longitude],
+            [via.latitude + 0.0003, via.longitude],
+            [via.latitude, via.longitude + 0.0003]
+        ]
+        if let idx = avoidances.firstIndex(where: {
+            $0.avoidedStreetName.caseInsensitiveCompare(street) == .orderedSame
+                && abs($0.destinationLatitude - destination.latitude) < 0.008
+                && abs($0.destinationLongitude - destination.longitude) < 0.008
+        }) {
+            avoidances[idx].hitCount += 1
+            avoidances[idx].updatedAt = .now
+            avoidances[idx].destinationTitle = destinationTitle
+            avoidances[idx].preferredPathSamples = samples
+        } else {
+            avoidances.insert(
+                RouteAvoidanceMemory(
+                    id: UUID(),
+                    destinationTitle: destinationTitle,
+                    destinationLatitude: destination.latitude,
+                    destinationLongitude: destination.longitude,
+                    avoidedStreetName: street,
+                    hitCount: 3,
+                    updatedAt: .now,
+                    preferredPathSamples: samples
+                ),
+                at: 0
+            )
+        }
+        persistAvoidances()
+    }
+
     func removeAvoidance(id: UUID) {
         avoidances.removeAll { $0.id == id }
         persistAvoidances()
@@ -329,6 +374,7 @@ final class DriveMateMemoryStore: ObservableObject {
         clearVisits()
         clearAvoidances()
         clearWakeProfile()
+        SavedPlacesStore.shared.clearAll()
     }
 
     // MARK: - Geometry helpers

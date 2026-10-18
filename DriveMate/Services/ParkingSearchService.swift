@@ -136,7 +136,7 @@ final class ParkingSearchService {
             do {
                 let response = try await MKLocalSearch(request: request).start()
                 for item in response.mapItems {
-                    let c = item.location.coordinate
+                    let c = MapKitCompatibility.coordinate(of: item)
                     let key = String(format: "%.5f,%.5f-%@", c.latitude, c.longitude, item.name ?? "")
                     if seen.insert(key).inserted {
                         items.append(item)
@@ -165,7 +165,7 @@ final class ParkingSearchService {
                     || name.contains("garaż")
                     || name.contains("garaz")
                 guard isParking else { continue }
-                let c = item.location.coordinate
+                let c = MapKitCompatibility.coordinate(of: item)
                 let key = String(format: "%.5f,%.5f-%@", c.latitude, c.longitude, item.name ?? "")
                 if seen.insert(key).inserted {
                     items.append(item)
@@ -182,7 +182,7 @@ final class ParkingSearchService {
         preferFree: Bool
     ) -> [ParkingOption] {
         items.compactMap { item -> ParkingOption? in
-            let coord = item.location.coordinate
+            let coord = MapKitCompatibility.coordinate(of: item)
             guard abs(coord.latitude) > 0.0001 || abs(coord.longitude) > 0.0001 else { return nil }
             let distance = origin.distance(
                 from: CLLocation(latitude: coord.latitude, longitude: coord.longitude)
@@ -256,6 +256,15 @@ final class ParkingSearchService {
         origin: CLLocationCoordinate2D
     ) async -> [ParkingOption] {
         guard !options.isEmpty else { return options }
+        guard #available(iOS 26.0, *) else { return options }
+        return await enrichWithAIFoundationModels(options, origin: origin)
+    }
+
+    @available(iOS 26.0, *)
+    private func enrichWithAIFoundationModels(
+        _ options: [ParkingOption],
+        origin: CLLocationCoordinate2D
+    ) async -> [ParkingOption] {
         let model = SystemLanguageModel.default
         guard case .available = model.availability else { return options }
 

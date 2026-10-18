@@ -28,12 +28,22 @@ enum DriveIntent: Equatable {
     case findNearestStore(query: String, label: String)
     /// Losowa ciekawostka (nie o ulicy).
     case tellTrivia
+    /// Ile czasu zostało do końca aktywnej trasy.
+    case remainingTravelTime
+    /// Zadaj łamigówkę (opcjonalnie kategoria: math/fantasy/science/philosophy).
+    case posePuzzle(categoryRaw: String?)
+    /// Powtórz ostatnią łamigówkę (głos + kafelek).
+    case repeatPuzzle
     case cancelListening
     case cancelRoute
     /// Przywróć trasę przerwaną przez zjazd (restauracja / stacja / nowa nawigacja).
     case restoreInterruptedRoute
     case music(MusicPlaybackCommand)
     case speedLimit
+    /// Kiedy / gdzie skręcić (następny manewr, rondo, skrzyżowanie).
+    case nextTurnInfo
+    /// Przelicz trasę pod inny manewr na następnym skrzyżowaniu (prosto / lewo / prawo).
+    case preferManeuver(direction: TurnDirection)
     /// Ile paliwa / ile złotych na aktywnej trasie.
     case fuelCost
     /// Stan baku: ile litrów, jaki procent, czy wystarczy.
@@ -50,10 +60,28 @@ enum DriveIntent: Equatable {
     case navigateToPastVisit(daysAgo: Int)
     /// Ukryj / pokaż kafelek UI nawigacji.
     case setChromeTile(tileQuery: String, visible: Bool)
+    /// Przezroczystość liquid glass kafelków (`true` = 35% regular, `false` = 90% regular).
+    case setTilesTransparency(moreTransparent: Bool)
+    /// Przeczytaj na głos aktualnie widoczny kafelek / ofertę.
+    case readVisibleTile
     /// Wyśrodkuj mapę / widok na lokalizacji kierowcy.
     case recenterMap
+    /// Włącz / wyłącz ciągłe nagrywanie.
+    case setRecording(enabled: Bool)
+    /// Ustaw lub zmień głośność aplikacji (0…1, albo delta).
+    case setVolume(level: Double?, delta: Double?)
+    /// Przełącz tryb jazdy (samochód / rower).
+    case setTravelMode(TravelMode)
+    /// Włącz / wyłącz tryb AR (samochód) albo kompas (rower).
+    case setOverlayMode(ar: Bool?, compass: Bool?)
     /// Pokaż okienko z listą umiejętności Drive Mate.
     case showCapabilities
+    /// Zapisz / zaktualizuj dom, pracę lub własne miejsce (`query == nil` → bieżąca lokalizacja).
+    case savePlace(slot: SavedPlaceSlot, customLabel: String?, replaceExisting: Bool, query: String?)
+    /// Pokaż okienko z wpisaniem nazwy (np. po „zapamiętaj moją szkołę”).
+    case promptSavePlaceName(label: String)
+    /// Pobierz mapy offline — okienko z obszarem (domyślnie 10 km).
+    case downloadOfflineMaps
     /// Luźna odpowiedź (wiedza / rozmowa) — bez efektów mapy.
     case answer(replyHint: String)
     /// Funkcja spoza możliwości — uczciwa odmowa.
@@ -93,9 +121,33 @@ enum DriveIntentParser {
             return .navigateToPastVisit(daysAgo: days)
         }
 
+        // Nagrywanie / głośność / tryb jazdy / AR·kompas — przed chrome i recenter
+        if let recording = extractRecordingCommand(from: lower) {
+            return .setRecording(enabled: recording)
+        }
+        if let volume = extractVolumeCommand(from: lower) {
+            return .setVolume(level: volume.level, delta: volume.delta)
+        }
+        if let mode = extractTravelModeCommand(from: lower) {
+            return .setTravelMode(mode)
+        }
+        if let overlay = extractOverlayModeCommand(from: lower) {
+            return .setOverlayMode(ar: overlay.ar, compass: overlay.compass)
+        }
+
         // Wyśrodkuj widok mapy PRZED chrome — „pokaż mnie na mapie” / „wyśrodkuj” ≠ ukryj/pokaż kafelek
         if isRecenterMap(lower) {
             return .recenterMap
+        }
+
+        // „Przeczytaj mi to” — odczyt widocznego kafelka
+        if isReadVisibleTile(lower) {
+            return .readVisibleTile
+        }
+
+        // Przezroczystość kafelków (przed chrome — „kafelki” + przezroczystość)
+        if let moreTransparent = extractTilesTransparency(from: lower) {
+            return .setTilesTransparency(moreTransparent: moreTransparent)
         }
 
         // Ukryj / pokaż kafelki UI
@@ -103,9 +155,19 @@ enum DriveIntentParser {
             return .setChromeTile(tileQuery: chrome.query, visible: chrome.visible)
         }
 
+        // Mapy offline — przed nawigacją („pobierz mapę” ≠ cel trasy)
+        if isOfflineMapDownload(lower) {
+            return .downloadOfflineMaps
+        }
+
         // „Co potrafisz?” → okienko umiejętności
         if isCapabilitiesHelp(lower) {
             return .showCapabilities
+        }
+
+        // Dom / praca / własne miejsca — przed nawigacją i „gdzie jestem”
+        if let save = extractSavePlaceCommand(from: cleaned, lower: lower) {
+            return save
         }
 
         // „Gdzie jestem” / „jaki jest mój adres” — najczęstsze pytanie, wyprzedza info o ulicy
@@ -116,6 +178,22 @@ enum DriveIntentParser {
         // Ogólna ciekawostka (przed historią ulicy — „powiedz ciekawostkę” ≠ ulica)
         if isTriviaRequest(lower) {
             return .tellTrivia
+        }
+
+        // Powtórz zagadkę (przed nową łamigówką)
+        if isRepeatPuzzle(lower) {
+            return .repeatPuzzle
+        }
+
+        // Łamigówki / zagadki (przed streetInfo — „opowiedz zagadkę” ≠ ulica)
+        if isPosePuzzle(lower) {
+            let cat = DrivePuzzleService.category(fromFolded: lower)
+            return .posePuzzle(categoryRaw: cat?.rawValue)
+        }
+
+        // ETA — ile czasu do końca trasy (przed paliwem / nawigacją)
+        if isRemainingTravelTime(lower) {
+            return .remainingTravelTime
         }
 
         // Historia ulicy (przed ogólnym streetInfo)
@@ -131,7 +209,8 @@ enum DriveIntentParser {
         if isTraffic(lower) {
             // „jak wygląda ruch na tej ulicy” — pytanie o TUTAJ, nie wyszukiwanie
             // ulicy o nazwie „tej ulicy” (wcześniej leciało „tej ulicy” do MapKit).
-            if isAboutCurrentPlace(lower) {
+            // „czy gdzieś mogę się spodziewać korków” → analiza trasy, bez szukania POI.
+            if isAboutCurrentPlace(lower) || isGeneralRouteTrafficQuestion(lower) {
                 return .traffic(query: nil)
             }
             let query = extractStreetQuery(cleaned, kind: .traffic)
@@ -149,6 +228,14 @@ enum DriveIntentParser {
 
         // Prędkość — po paliwie, bo „ile mogę jechać” myli się ze spalaniem
         if isSpeedLimit(lower) { return .speedLimit }
+
+        // „Chcę jechać prosto / w lewo na następnym” — zmiana trasy (przed pytaniem o manewr)
+        if let prefer = extractPreferManeuver(lower) {
+            return .preferManeuver(direction: prefer)
+        }
+
+        // Kiedy / gdzie skręcić
+        if isNextTurnInfo(lower) { return .nextTurnInfo }
 
         // Paliwo: zasięg → koszt/zużycie trasy → stan baku → stacja.
         // Koszt PRZED poziomem — „ile mi to paliwa zużyje ta trasa” ≠ bak cyfrowy.
@@ -218,7 +305,10 @@ enum DriveIntentParser {
             "aha", "ano", "no", "noo", "nu", "ojoj", "ech", "ach", "och",
             "ok", "okay", "okej", "okey", "dobra", "dobrze", "jasne", "spoko",
             "tak", "nie", "yes", "yeah", "yep", "nope",
-            "hej", "hey", "cześć", "czesc", "siema", "elo"
+            "hej", "hey", "cześć", "czesc", "siema", "elo",
+            // Resztki po „Hey Drive …” z ASR
+            "mate", "drive", "drajw", "draj", "dryve", "draif", "draiw",
+            "drivemate", "drajwmejt", "drive mate", "drajw mate"
         ]
         if fillers.contains(trimmed) { return true }
         // Samogłoski / bełkot 1–3 znaki bez sensu miejsca
@@ -245,15 +335,20 @@ enum DriveIntentParser {
         if isNoiseOrFiller(lower) { return false }
         if isNavigation(lower) || isTraffic(lower) || isStreetInfo(lower) || isStreetHistory(lower) { return true }
         if isFuelLevel(lower) || isFuelRange(lower) || isFuelCost(lower) || isNearestFuel(lower) { return true }
-        if isFoodRequest(lower) || isSpeedLimit(lower) || isWhereAmI(lower) { return true }
+        if isFoodRequest(lower) || isSpeedLimit(lower) || isNextTurnInfo(lower) || isWhereAmI(lower) { return true }
+        if extractPreferManeuver(lower) != nil { return true }
+        if isOfflineMapDownload(lower) { return true }
+        if extractSavePlaceCommand(from: lower, lower: lower) != nil { return true }
         if isTriviaRequest(lower) || extractStoreSearch(from: lower) != nil { return true }
+        if isRemainingTravelTime(lower) || isPosePuzzle(lower) { return true }
         if isRecenterMap(lower) || isCapabilitiesHelp(lower) { return true }
         if extractMusicCommand(from: lower) != nil { return true }
         if isCancelRoute(lower) || isCancelListening(lower) || isRestoreInterruptedRoute(lower) { return true }
         let domainKeys = [
             "paliw", "trase", "trasa", "nawig", "kork", "ulic", "adres", "restaur",
             "stacj", "tankow", "muzyk", "utwor", "piosenk", "wysrodk", "centruj",
-            "potrafisz", "umiesz", "gdzie jestem", "ile mam", "dowiez"
+            "potrafisz", "umiesz", "gdzie jestem", "ile mam", "dowiez",
+            "lamigow", "zagadk", "ile jeszcze", "ile czasu", "eta"
         ]
         return domainKeys.contains(where: { lower.contains($0) })
     }
@@ -303,21 +398,195 @@ enum DriveIntentParser {
     /// „Wyśrodkuj mi widok” / „centruj mapę” — akcja UI, nie nawigacja do „widok”.
     private static func isRecenterMap(_ lower: String) -> Bool {
         let phrases = [
-            "wysrodkuj", "wysrodkowac", "wycentruj", "wycentrowac", "centruj",
-            "recenter", "center map", "centre map",
-            "pokaz mnie na mapie", "pokaz mnie", "gdzie jestem na mapie"
+            "wysrodkuj", "wysrodkowac", "wysrodkowanie", "wysrodkoj", "wysrodku",
+            "zesrodkuj", "zesrodkowac", "srodkuj", "srodkowanie",
+            "wycentruj", "wycentrowac", "centruj", "centrowanie", "wycentrowanie",
+            "recenter", "center map", "centre map", "center on me", "center view",
+            "pokaz mnie na mapie", "gdzie jestem na mapie",
+            "wysrodkuj widok", "wycentruj widok", "centruj widok",
+            "wysrodkuj mape", "wycentruj mape", "centruj mape",
+            "wysrodkuj kamere", "wroc do mnie na mapie",
+            "wycentruj na mnie", "wysrodkuj na mnie", "centruj na mnie",
+            "na moja lokalizacje", "na mojej lokalizacji", "kamera na mnie",
+            "wroc na mnie", "wroc do mnie", "follow me", "moja pozycja na mapie"
         ]
-        guard phrases.contains(where: { lower.contains($0) }) else { return false }
-        // „ukryj przycisk wyśrodkuj” / „schowaj kafelek wyśrodkuj” = chrome, nie akcja mapy
-        let chromeOnly = lower.contains("kafelek") || lower.contains("przycisk")
-        if chromeOnly && (
-            lower.contains("ukryj") || lower.contains("schowaj")
+        guard phrases.contains(where: { lower.contains($0) })
+                || (lower.contains("pokaz mnie") && (lower.contains("map") || lower.contains("widok")))
+                || (lower.contains("srodk") && (lower.contains("widok") || lower.contains("map")
+                    || lower.contains("mnie") || lower.contains("kamer")))
+        else { return false }
+
+        // Ukryj/pokaż kafelek „wyśrodkuj” — nie recenter
+        if (lower.contains("kafelek") || lower.contains("przycisk"))
+            && (lower.contains("ukryj") || lower.contains("schowaj")
                 || lower.contains("wylacz") || lower.contains("wlacz")
-                || lower.contains("pokaz")
-        ) {
+                || lower.contains("pokaz") || lower.contains("przywroc")) {
+            return false
+        }
+        // Samo „ukryj wyśrodkuj” / „schowaj wyśrodkuj” bez „widok/mapę”
+        if (lower.contains("ukryj") || lower.contains("schowaj") || lower.contains("wylacz"))
+            && (lower.contains("wysrodk") || lower.contains("centru"))
+            && !lower.contains("widok") && !lower.contains("map") && !lower.contains("mnie")
+            && !lower.contains("kamer") {
             return false
         }
         return true
+    }
+
+    private static func extractRecordingCommand(from lower: String) -> Bool? {
+        let mentionsRec =
+            lower.contains("nagryw") || lower.contains("nagranie") || lower.contains("recording")
+            || lower.contains("rekorder") || lower.contains("recorder")
+            || (lower.contains("kamer") && (lower.contains("wlacz") || lower.contains("wylacz")
+                || lower.contains("start") || lower.contains("stop")))
+        guard mentionsRec else { return nil }
+        // Chrome: „ukryj kafelek nagrywania”
+        if lower.contains("kafelek") || lower.contains("przycisk") || lower.contains("wskaznik") {
+            return nil
+        }
+        if lower.contains("wylacz") || lower.contains("zatrzymaj") || lower.contains("stop")
+            || lower.contains("zakoncz nagr") || lower.contains("zakończ nagr")
+            || lower.contains("koniec nagr") {
+            return false
+        }
+        if lower.contains("wlacz") || lower.contains("start") || lower.contains("rozpoczn")
+            || lower.contains("nagrywaj") || lower.contains("zacznij nagr") {
+            return true
+        }
+        return nil
+    }
+
+    /// `level` absolutne 0…1 albo `delta` względne.
+    private static func extractVolumeCommand(from lower: String) -> (level: Double?, delta: Double?)? {
+        let mentionsVol =
+            lower.contains("glosn") || lower.contains("volume") || lower.contains("ciszej")
+            || lower.contains("glosniej") || lower.contains("scisz") || lower.contains("ścisz")
+            || lower.contains("poglosnij") || lower.contains("podglosnij")
+        // Samo „głośność” / „ścisz aplikację”
+        guard mentionsVol
+                || ((lower.contains("scisz") || lower.contains("poglosn") || lower.contains("podglosn"))
+                    && (lower.contains("applik") || lower.contains("aplik") || lower.contains("drive")
+                        || lower.contains("muzyk") || lower.contains("dzwiek") || lower.contains("dzwięk")))
+        else { return nil }
+
+        // Nie mylić z przezroczystością kafelków
+        if lower.contains("przezroczyst") || lower.contains("transparent") { return nil }
+        // „wycisz muzykę” = pauza, nie głośność 0 — zostaw music handlerowi jeśli tylko pauza
+        if (lower.contains("wycisz muzyk") || lower.contains("wycisz piosen"))
+            && !lower.contains("glosn") {
+            return nil
+        }
+
+        // Absolutnie: „na 50”, „50%”, „do połowy”
+        if lower.contains("polowa") || lower.contains("polowę") || lower.contains("polowe")
+            || lower.contains("w polowie") {
+            return (0.5, nil)
+        }
+        if lower.contains("maks") || lower.contains("max") || lower.contains("pelna")
+            || lower.contains("pełna") || lower.contains("na full") {
+            return (1.0, nil)
+        }
+        if lower.contains("minimum") || lower.contains("najciszej") || lower.contains("na zero") {
+            return (0.05, nil)
+        }
+        if let pct = firstPercent(in: lower) {
+            return (min(1, max(0, pct / 100)), nil)
+        }
+        // „głośność 7” / „na 7” (skala 0–10)
+        if let n = firstNumber(in: lower), n <= 10, lower.contains("glosn") || lower.contains("volume") {
+            return (min(1, max(0, n / 10)), nil)
+        }
+
+        if lower.contains("glosniej") || lower.contains("zwieksz glosn") || lower.contains("zwiększ glosn")
+            || lower.contains("podglosnij") || lower.contains("poglosnij")
+            || lower.contains("volume up") || lower.contains("louder") {
+            return (nil, 0.12)
+        }
+        if lower.contains("ciszej") || lower.contains("zmniejsz glosn") || lower.contains("scisz")
+            || lower.contains("ścisz") || lower.contains("volume down") || lower.contains("quieter") {
+            return (nil, -0.12)
+        }
+        return nil
+    }
+
+    private static func extractTravelModeCommand(from lower: String) -> TravelMode? {
+        let wantsBike =
+            lower.contains("tryb rower") || lower.contains("rowerowy")
+            || (lower.contains("rower") && (lower.contains("tryb") || lower.contains("wlacz")
+                || lower.contains("przelacz") || lower.contains("przełącz") || lower.contains("zmien")
+                || lower.contains("ustaw")))
+            || lower.contains("bike mode") || lower.contains("bicycle mode")
+        let wantsCar =
+            lower.contains("tryb samochod") || lower.contains("samochodowy")
+            || (lower.contains("samochod") && (lower.contains("tryb") || lower.contains("wlacz")
+                || lower.contains("przelacz") || lower.contains("przełącz") || lower.contains("zmien")
+                || lower.contains("ustaw")))
+            || lower.contains("car mode") || lower.contains("auto mode")
+
+        if wantsBike && !wantsCar { return .bike }
+        if wantsCar && !wantsBike { return .car }
+        return nil
+    }
+
+    /// `ar` / `compass` — true=włącz, false=wyłącz; dokładnie jedno ustawione.
+    private static func extractOverlayModeCommand(from lower: String) -> (ar: Bool?, compass: Bool?)? {
+        let mentionsAR =
+            lower.contains(" tryb ar") || lower.contains("tryb ar") || lower.hasPrefix("ar ")
+            || lower.contains(" ar ") || lower.hasSuffix(" ar") || lower == "ar"
+            || lower.contains("augmented") || lower.contains("rzeczywistosc rozszerz")
+            || lower.contains("rzeczywistość rozszerz") || lower.contains("kamera nawig")
+            || lower.contains("nawigacj") && lower.contains("kamer")
+        let mentionsCompass =
+            lower.contains("kompas") || lower.contains("compass")
+
+        guard mentionsAR || mentionsCompass else { return nil }
+        // Nie mylić z „wyśrodkuj kompasem” etc.
+        if lower.contains("wysrodk") || lower.contains("centruj") { return nil }
+
+        let turnOff = lower.contains("wylacz") || lower.contains("zakoncz") || lower.contains("zakończ")
+            || lower.contains("wylaczyc") || lower.contains("schowaj") || lower.contains("wylacz")
+            || lower.contains("exit") || lower.contains("leave") || lower.contains("wroc do mapy")
+            || lower.contains("wróć do mapy") || lower.contains("mapa z powrotem")
+        let turnOn = lower.contains("wlacz") || lower.contains("wlaczyc") || lower.contains("uruchom")
+            || lower.contains("otworz") || lower.contains("otwórz") || lower.contains("wejdz w")
+            || lower.contains("wejdź w") || lower.contains("start")
+
+        if mentionsCompass && !mentionsAR {
+            if turnOff { return (nil, false) }
+            if turnOn || lower.contains("tryb kompas") { return (nil, true) }
+            return nil
+        }
+        if mentionsAR {
+            if turnOff { return (false, nil) }
+            if turnOn || lower.contains("tryb ar") { return (true, nil) }
+            return nil
+        }
+        return nil
+    }
+
+    private static func firstPercent(in lower: String) -> Double? {
+        if let regex = try? NSRegularExpression(pattern: #"(\d{1,3})\s*%"#),
+           let match = regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+           let r = Range(match.range(at: 1), in: lower),
+           let n = Double(lower[r]) {
+            return n
+        }
+        if let regex = try? NSRegularExpression(pattern: #"(?:na|do|glosnosc|volume)\s*(\d{1,3})\b"#),
+           let match = regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+           let r = Range(match.range(at: 1), in: lower),
+           let n = Double(lower[r]), n <= 100 {
+            return n
+        }
+        return nil
+    }
+
+    private static func firstNumber(in lower: String) -> Double? {
+        if let regex = try? NSRegularExpression(pattern: #"\b(\d{1,3})\b"#),
+           let match = regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+           let r = Range(match.range(at: 1), in: lower) {
+            return Double(lower[r])
+        }
+        return nil
     }
 
     /// Naturalne pytania o możliwości Drive Mate.
@@ -383,6 +652,20 @@ enum DriveIntentParser {
         return true
     }
 
+    private static func isOfflineMapDownload(_ lower: String) -> Bool {
+        let wantsMap = lower.contains("mape offline") || lower.contains("mapy offline")
+            || lower.contains("offline map") || lower.contains("mape do offline")
+            || lower.contains("mapy do offline") || lower.contains("offline mape")
+            || (lower.contains("offline") && lower.contains("map"))
+        let wantsDownload = lower.contains("pobierz") || lower.contains("sciagnij") || lower.contains("ściągnij")
+            || lower.contains("pobieranie") || lower.contains("zapisz map") || lower.contains("sciagn")
+            || lower.contains("download")
+        if wantsMap && wantsDownload { return true }
+        if lower.contains("pobierz mape") || lower.contains("pobierz mapy") { return true }
+        if lower.contains("mapy offline") || lower.contains("mape offline") { return true }
+        return false
+    }
+
     private static func extractMusicCommand(from lower: String) -> MusicPlaybackCommand? {
         let musicContext = lower.contains("muzyk") || lower.contains("utwór") || lower.contains("utwor")
             || lower.contains("piosenk") || lower.contains("track") || lower.contains("playlist")
@@ -391,28 +674,32 @@ enum DriveIntentParser {
         let navConflict = lower.contains("zjazd") || lower.contains("skrzyż") || lower.contains("skrzyz")
             || lower.contains("ulic") || lower.contains("tras") || lower.contains("nawig")
             || lower.contains("kilometr") || lower.contains(" metr")
+            || lower.contains("skret") || lower.contains("manewr")
 
-        // Następny / poprzedni
+        // Następny / poprzedni / przewiń / cofnij
         let wantsPrevious = lower.contains("poprzedni") || lower.contains("wcześniejsz") || lower.contains("wczesniejsz")
             || lower.contains("cofnij") || lower.contains("previous") || lower.contains("last track")
             || lower.contains("cofnij utwor") || lower.contains("cofnij utwór")
-        // `lower` jest już folded, więc „następny” → „nastepny”. Klucz z „ę” nigdy nie trafiał.
+            || lower.contains("cofni") || lower.contains("wroc utwor") || lower.contains("wroc piosen")
+        // `lower` jest już folded, więc „następny” → „nastepny”.
         let wantsNext = lower.contains("nastepn") || lower.contains("kolejn") || lower.contains("skip")
             || lower.contains("next") || lower == "dalej" || lower.hasPrefix("dalej ")
-            || lower.contains("przesuń") || lower.contains("przesun")
+            || lower.contains("przesuń") || lower.contains("przesun") || lower.contains("przewin")
+            || lower.contains("przewiń")
 
         if wantsPrevious {
             if musicContext { return .previous }
-            // Krótkie komendy do panelu odtwarzacza (bez konfliktu z nawigacją)
             if !navConflict, lower == "poprzedni" || lower.hasPrefix("poprzedni ")
-                || lower == "cofnij" || lower.hasPrefix("cofnij ") {
+                || lower == "cofnij" || lower.hasPrefix("cofnij ")
+                || lower.contains("cofnij utwor") || lower.contains("poprzedni utwor") {
                 return .previous
             }
         }
         if wantsNext {
-            if musicContext || lower.contains("skip") { return .next }
+            if musicContext || lower.contains("skip") || lower.contains("przewin") { return .next }
             if !navConflict, lower == "następny" || lower == "nastepny" || lower == "kolejny"
-                || lower.hasPrefix("następn") || lower.hasPrefix("nastepn") || lower.hasPrefix("kolejn") {
+                || lower.hasPrefix("następn") || lower.hasPrefix("nastepn") || lower.hasPrefix("kolejn")
+                || lower.contains("nastepny utwor") || lower.contains("przewin") {
                 return .next
             }
         }
@@ -435,8 +722,9 @@ enum DriveIntentParser {
             || lower.contains("zatrzymaj muzyk") || lower.contains("zatrzymaj piosen")
             || lower.contains("zatrzymaj odtwarz") || lower.contains("wstrzymaj muzyk")
             || lower.contains("wycisz muzyk") || lower.contains("stop music")
+            || lower.contains("wylacz muzyk") || lower.contains("wyłącz muzyk")
             || lower == "stop" || lower == "pause"
-            || (musicContext && (lower.contains("zatrzymaj") || lower.contains("zatrzym") || lower.contains("stop") || lower.contains("wstrzymaj"))) {
+            || (musicContext && (lower.contains("zatrzymaj") || lower.contains("zatrzym") || lower.contains("stop") || lower.contains("wstrzymaj") || lower.contains("pauz"))) {
             return .pause
         }
 
@@ -449,7 +737,367 @@ enum DriveIntentParser {
         return nil
     }
 
-private static func isSpeedLimit(_ lower: String) -> Bool {
+    /// Jednolite reguły miejsc:
+    /// - „tutaj jest mój/moja Y” → bieżąca lokalizacja GPS
+    /// - „zapamiętaj mój/moja Y” → okienko z wpisaniem nazwy/adresu
+    /// - „… Y to X” / „zmień Y na X” → zapis z wyszukaniem X
+    private static func extractSavePlaceCommand(from cleaned: String, lower: String) -> DriveIntent? {
+        let isHere =
+            lower.contains("tutaj jest") || lower.contains("tu jest")
+            || lower.contains("to jest moj") || lower.contains("to jest moja") || lower.contains("to jest moje")
+            || lower.contains("here is my") || lower.contains("this is my")
+        let isRemember =
+            lower.contains("zapamietaj") || lower.contains("zapamiętaj")
+            || lower.contains("zapisz jako") || lower.contains("zapisz to jako")
+            || lower.contains("oznacz jako")
+            || (lower.contains("zapisz") && !lower.contains("zapisz trase") && !lower.contains("zapisz trasa"))
+        let isChange =
+            lower.contains("zmien") || lower.contains("zaktualizuj") || lower.contains("popraw")
+            || lower.contains("przenies") || lower.contains("update ")
+
+        guard isHere || isRemember || isChange || looksLikeAliasPlaceDefinition(lower) else { return nil }
+
+        // „moja szkoła to UKEN” / „zapamiętaj dom to ul. Floriańska”
+        if let alias = extractAliasPlaceDefinition(from: cleaned, lower: lower) {
+            return savePlaceIntent(forLabel: alias.label, query: alias.query, replaceExisting: true)
+        }
+
+        // „zmień szkołę na UKEN” / „zmień dom na …”
+        if isChange, let label = extractPlaceRoleLabel(from: lower) {
+            let query = extractSavePlaceTargetQuery(from: cleaned, lower: lower, slotWord: label)
+            if let query, !query.isEmpty {
+                return savePlaceIntent(forLabel: label, query: query, replaceExisting: true)
+            }
+            // „zmień mój dom” bez adresu → okienko
+            return .promptSavePlaceName(label: label)
+        }
+
+        guard let label = extractPlaceRoleLabel(from: lower) else { return nil }
+
+        // „tutaj jest moja szkoła / mój dom / moja praca”
+        if isHere {
+            return savePlaceIntent(forLabel: label, query: nil, replaceExisting: true)
+        }
+
+        // „zapamiętaj mój dom / moją szkołę / moją pracę” → okienko
+        if isRemember {
+            return .promptSavePlaceName(label: label)
+        }
+
+        // Własna nazwa: „jako X”
+        if let custom = extractCustomPlaceLabel(from: cleaned, lower: lower) {
+            let query = extractSavePlaceTargetQuery(from: cleaned, lower: lower, slotWord: custom)
+            if query == nil, isRemember || isChange {
+                return .promptSavePlaceName(label: custom)
+            }
+            return savePlaceIntent(forLabel: custom, query: query, replaceExisting: true)
+        }
+        return nil
+    }
+
+    private static func savePlaceIntent(
+        forLabel rawLabel: String,
+        query: String?,
+        replaceExisting: Bool
+    ) -> DriveIntent {
+        let label = SavedPlacesStore.canonicalLabel(for: rawLabel)
+        let key = SavedPlacesStore.normalizeAliasKey(folded(label))
+        switch key {
+        case "dom", "home", "house":
+            return .savePlace(slot: .home, customLabel: nil, replaceExisting: replaceExisting, query: query)
+        case "praca", "work", "office":
+            return .savePlace(slot: .work, customLabel: nil, replaceExisting: replaceExisting, query: query)
+        default:
+            return .savePlace(
+                slot: .custom,
+                customLabel: label,
+                replaceExisting: replaceExisting,
+                query: query
+            )
+        }
+    }
+
+    /// Wyciąga Y z „mój/moja Y” (dom, praca, szkoła, siłownia, …).
+    private static func extractPlaceRoleLabel(from lower: String) -> String? {
+        var rest = lower
+        let stripChunks = [
+            "zapamietaj ze ", "zapamiętaj że ", "zapamietaj ", "zapamiętaj ",
+            "zapisz ze ", "zapisz że ", "zapisz jako ", "zapisz to jako ", "zapisz ",
+            "oznacz jako ", "tutaj jest ", "tu jest ", "to jest ",
+            "zmien ", "zaktualizuj ", "popraw ", "przenies ",
+            "here is my ", "this is my ", "save as ", "remember my ", "remember "
+        ]
+        for chunk in stripChunks {
+            if let r = rest.range(of: chunk) {
+                rest = String(rest[r.upperBound...])
+            }
+        }
+        rest = rest.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        for poss in ["moja ", "moj ", "moje ", "mojej ", "mojego ", "moim ", "nasza ", "nasz ", "my "] {
+            if rest.hasPrefix(poss) {
+                rest = String(rest.dropFirst(poss.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        // Odetnij „na …” / „to …” jeśli zostały
+        if let na = rest.range(of: " na ") {
+            rest = String(rest[..<na.lowerBound])
+        }
+        if let to = rest.range(of: " to ") {
+            rest = String(rest[..<to.lowerBound])
+        }
+        rest = rest.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard rest.count >= 2 else { return nil }
+
+        let known: [(needle: String, label: String)] = [
+            ("szkol", "Szkoła"), ("school", "Szkoła"),
+            ("silown", "Siłownia"), ("gym", "Siłownia"), ("fitness", "Siłownia"),
+            ("uczel", "Uczelnia"), ("uniwersyt", "Uniwersytet"), ("akadem", "Akademia"),
+            ("przedszkol", "Przedszkole"),
+            ("biuro", "Biuro"), ("garaz", "Garaż"),
+            ("dom", "Dom"), ("home", "Dom"), ("house", "Dom"),
+            ("prac", "Praca"), ("work", "Praca"), ("office", "Praca")
+        ]
+        for item in known where rest.contains(item.needle) || rest == item.needle {
+            return item.label
+        }
+        // Dowolne inne Y (np. „kawa”, „siłownia X”) — max 3 słowa
+        let words = rest.split(separator: " ").prefix(3).map(String.init)
+        let joined = words.joined(separator: " ")
+        guard joined.count >= 2, !isNoiseOrFiller(joined) else { return nil }
+        return SavedPlacesStore.canonicalLabel(for: joined)
+    }
+
+    /// „moja szkoła to …” / „szkoła to …” — definicja aliasu, nie luźne „to”.
+    private static func looksLikeAliasPlaceDefinition(_ lower: String) -> Bool {
+        guard lower.contains(" to ") else { return false }
+        let keys = [
+            "szkol", "silown", "uczel", "uniwersyt", "akadem", "przedszkol",
+            "biuro", "garaz", "fitness", "gym", "school",
+            "dom", "home", "prac", "work", "office"
+        ]
+        return keys.contains(where: { lower.contains($0) })
+            || lower.contains("moja ") || lower.contains("moj ") || lower.contains("moje ")
+    }
+
+    /// „(zapamiętaj) moja szkoła to UKEN” → label=Szkoła, query=UKEN.
+    private static func extractAliasPlaceDefinition(
+        from cleaned: String,
+        lower: String
+    ) -> (label: String, labelFold: String, query: String)? {
+        var restFold = lower
+        let stripPrefixes = [
+            "zapamietaj ze ", "zapamiętaj że ", "zapamietaj ", "zapamiętaj ",
+            "zapisz ze ", "zapisz że ", "zapisz ",
+            "pamietaj ze ", "pamiętaj że ", "pamietaj ", "pamiętaj "
+        ]
+        for prefix in stripPrefixes {
+            if restFold.hasPrefix(prefix) {
+                restFold = String(restFold.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+
+        // Zmapuj z powrotem na oryginał (dla wielkości liter w query, np. UKEN).
+        let dropCount = lower.count - restFold.count
+        let restCleaned: String = {
+            guard dropCount > 0, dropCount <= cleaned.count else { return cleaned }
+            let idx = cleaned.index(cleaned.startIndex, offsetBy: dropCount)
+            return String(cleaned[idx...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+
+        // „moja szkoła to UKEN” / „szkoła to UKEN”
+        if let toRange = restFold.range(of: " to ") {
+            var labelPart = String(restFold[..<toRange.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            for poss in ["moja ", "moj ", "moje ", "mojej ", "mojego ", "nasza ", "nasz "] {
+                if labelPart.hasPrefix(poss) {
+                    labelPart = String(labelPart.dropFirst(poss.count))
+                    break
+                }
+            }
+            let queryFold = String(restFold[toRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            guard labelPart.count >= 2, queryFold.count >= 2 else { return nil }
+            // Query z oryginalnej wielkości liter
+            let queryOriginal: String = {
+                if let r = restCleaned.range(of: " to ", options: .caseInsensitive) {
+                    return String(restCleaned[r.upperBound...])
+                        .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                }
+                return queryFold
+            }()
+            let label = SavedPlacesStore.canonicalLabel(for: labelPart)
+            return (label, folded(label), queryOriginal)
+        }
+
+        // „zapamiętaj szkołę UKEN” / „zapamiętaj siłownię CityFit”
+        if let r = restFold.range(
+            of: #"^(szkol[aeyę]|silowni[aeę]|uczelni[aeę]|uniwersytet|akademi[aeę]|przedszkol[ea]|biuro|gara[zż])\s+(.+)$"#,
+            options: .regularExpression
+        ) {
+            let matched = String(restFold[r])
+            let parts = matched.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            guard parts.count == 2 else { return nil }
+            let label = SavedPlacesStore.canonicalLabel(for: String(parts[0]))
+            let query = String(parts[1])
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            guard query.count >= 2 else { return nil }
+            return (label, folded(label), query)
+        }
+
+        return nil
+    }
+
+    private static func extractCustomPlaceLabel(from cleaned: String, lower: String) -> String? {
+        let markers = ["jako ", "miejsce o nazwie ", "miejsce "]
+        for marker in markers {
+            guard let r = lower.range(of: marker) else { continue }
+            let idx = cleaned.index(
+                cleaned.startIndex,
+                offsetBy: lower.distance(from: lower.startIndex, to: r.upperBound),
+                limitedBy: cleaned.endIndex
+            ) ?? cleaned.endIndex
+            var label = String(cleaned[idx...])
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            // „zmień X na adres” — etykieta to X przed „ na ”
+            if let na = folded(label).range(of: " na ") {
+                let cut = label.index(label.startIndex, offsetBy: folded(label).distance(from: folded(label).startIndex, to: na.lowerBound))
+                label = String(label[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let fold = folded(label)
+            if fold.isEmpty || fold == "dom" || fold.hasPrefix("prac") { continue }
+            if fold.count >= 2 { return SavedPlacesStore.canonicalLabel(for: label) }
+        }
+        return nil
+    }
+
+    /// „na Wawel” / „na ulicę X” po słowie slotu; `nil` = bieżąca lokalizacja.
+    private static func extractSavePlaceTargetQuery(from cleaned: String, lower: String, slotWord: String) -> String? {
+        // „zmień dom na …” / „zapisz dom jako …” już obsłużone etykietą — tu cel geokodu.
+        if let r = lower.range(of: #"\bna\s+"#, options: .regularExpression) {
+            let after = String(cleaned[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let foldAfter = folded(after)
+            // „na mojej lokalizacji” / „na teraz” → current
+            if foldAfter.hasPrefix("moj") || foldAfter.hasPrefix("teraz") || foldAfter.hasPrefix("tej lokal")
+                || foldAfter.hasPrefix("aktualn") {
+                return nil
+            }
+            // Nie traktuj „jako …” jako lokalizacji
+            if foldAfter.hasPrefix("jako") { return nil }
+            if after.count >= 2 { return after }
+        }
+        _ = slotWord
+        return nil
+    }
+
+    /// „Chciałbym pojechać prosto na następnym skrzyżowaniu” / „skręć w lewo zamiast”.
+    private static func extractPreferManeuver(_ lower: String) -> TurnDirection? {
+        // Pytania o manewr („kiedy skręcić”) — nie zmiana trasy.
+        if lower.contains("kiedy") || lower.contains("za ile") || lower.contains("gdzie mam")
+            || lower.contains("gdzie skrecam") || lower.contains("jaki jest nastepny") {
+            return nil
+        }
+        if (lower.contains("ukryj") || lower.contains("schowaj")) && lower.contains("kafelek") {
+            return nil
+        }
+
+        // „po prostu” ≠ manewr „prosto”.
+        let hasStraight =
+            (!lower.contains("po prostu") && (
+                lower.contains("jedz prosto") || lower.contains("jechac prosto")
+                || lower.contains("pojechac prosto") || lower.contains("jade prosto")
+                || lower.contains(" na prosto") || lower.contains("prosto na")
+                || lower.hasPrefix("prosto") || lower.contains(" prosto")
+                || lower.contains("na wprost")
+            ))
+            || lower.contains("nie skrecaj") || lower.contains("bez skretu")
+            || lower.contains("go straight") || lower.contains("straight ahead") || lower.contains("keep straight")
+        let hasLeft =
+            lower.contains("w lewo") || lower.contains("na lewo")
+            || lower.contains("turn left") || lower.contains("keep left") || lower.contains("bear left")
+        let hasRight =
+            lower.contains("w prawo") || lower.contains("na prawo")
+            || lower.contains("turn right") || lower.contains("keep right") || lower.contains("bear right")
+
+        let direction: TurnDirection?
+        if hasStraight, !hasLeft, !hasRight {
+            direction = .straight
+        } else if hasLeft, !hasRight, !hasStraight {
+            direction = .left
+        } else if hasRight, !hasLeft, !hasStraight {
+            direction = .right
+        } else if hasStraight, (lower.contains("zamiast") || lower.contains("nie skrec")) {
+            direction = .straight
+        } else {
+            direction = nil
+        }
+        guard let direction else { return nil }
+
+        let explicitDesire =
+            lower.contains("chcialbym") || lower.contains("chce ")
+            || lower.contains("wolalbym") || lower.contains("wole ")
+            || lower.contains("zamiast") || lower.contains("nie skrec")
+            || lower.contains("zmien tras") || lower.contains("przelicz")
+            || lower.contains("inna trasa") || lower.contains("innej trasy")
+            || lower.contains("prefer") || lower.contains("rather")
+            || lower.contains("pojechac") || lower.contains("jechac")
+            || lower.contains("pojade") || lower.contains("jade ")
+            || lower.contains("jedz prosto") || lower.contains("jedz w lewo") || lower.contains("jedz w prawo")
+            || lower.contains("skrec w lewo") || lower.contains("skrec w prawo")
+
+        let atIntersection =
+            lower.contains("nastepn") || lower.contains("najblizsz")
+            || lower.contains("skrzyz") || lower.contains("rond")
+            || lower.contains("intersection") || lower.contains("roundabout")
+
+        let duringNav = MapKitNavigationService.shared.mapState?.isNavigating == true
+        if explicitDesire || atIntersection { return direction }
+        if duringNav { return direction }
+        return nil
+    }
+
+    private static func isNextTurnInfo(_ lower: String) -> Bool {
+        // Unikaj kolizji z ukrywaniem kafelka skrętu / nawigacją „skręć w …”
+        if (lower.contains("ukryj") || lower.contains("schowaj") || lower.contains("pokaz"))
+            && lower.contains("kafelek") {
+            return false
+        }
+        // Preferencja manewru ≠ pytanie o następny skręt.
+        if extractPreferManeuver(lower) != nil { return false }
+        if isNavigation(lower), lower.contains("jedz") || lower.contains("do ") || lower.contains("na ") {
+            // „jedź na Wawel” ≠ pytanie o manewr
+            if !lower.contains("kiedy") && !lower.contains("ktory") && !lower.contains("które")
+                && !lower.contains("jakim") && !lower.contains("gdzie skrec")
+                && !lower.contains("gdzie mam skrec") {
+                return false
+            }
+        }
+
+        let phrases = [
+            "kiedy mam skrecic", "kiedy skrecam", "kiedy skrecic", "kiedy mam skrec",
+            "kiedy nastepny skret", "kiedy jest skret", "za ile skrec", "za ile mam skrec",
+            "gdzie mam skrecic", "gdzie skrecam", "gdzie skrecic", "gdzie jest skret",
+            "na jakim skrzyzowaniu", "na jakim rondzie", "ktore rondo", "ktorym rondzie",
+            "jakie skrzyzowanie", "jakim skrzyzowaniu", "na ktorej ulicy skrec",
+            "jaki jest nastepny skret", "nastepny skret", "kolejny skret",
+            "kiedy mam zjechac", "gdzie mam zjechac", "ktory zjazd",
+            "when do i turn", "where do i turn", "next turn", "which roundabout"
+        ]
+        if phrases.contains(where: { lower.contains($0) }) { return true }
+
+        let asksWhenWhere =
+            lower.contains("kiedy") || lower.contains("gdzie") || lower.contains("jakim")
+            || lower.contains("ktory") || lower.contains("ktore") || lower.contains("za ile")
+        let turnWord =
+            lower.contains("skrec") || lower.contains("skret") || lower.contains("rondo")
+            || lower.contains("skrzyz") || lower.contains("zjazd") || lower.contains("zjedz")
+            || lower.contains("manewr") || lower.contains("turn") || lower.contains("roundabout")
+        return asksWhenWhere && turnWord
+    }
+
+    private static func isSpeedLimit(_ lower: String) -> Bool {
         let keys = [
             "maksymalna predkosc", "limit predkosci",
             "ile moge jechac", "jaka predkosc",
@@ -733,6 +1381,11 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
     }
 
     private static func isStreetHistory(_ lower: String) -> Bool {
+        let placeWord = lower.contains("ulic") || lower.contains("miejsc") || lower.contains("drog")
+            || lower.contains("tej") || isAboutCurrentPlace(lower)
+            || lower.contains(" ta ") || lower.contains("o ulic") || lower.contains("o tej")
+            || lower.contains("okolic") || lower.contains("tutaj") || lower.contains("tu ")
+
         let historyWord = lower.contains("histori") || lower.contains("ciekawostk")
             || lower.contains("skad nazwa") || lower.contains("skąd nazwa")
             || lower.contains("od kiedy") || lower.contains("kiedy zbudowano")
@@ -740,11 +1393,98 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
             || lower.contains("co tu bylo") || lower.contains("co tu było")
             || lower.contains("tlumaczenie nazwy") || lower.contains("co oznacza ta nazwa")
             || lower.contains("pochodzenie nazwy") || lower.contains("geneza")
+            || lower.contains("patron") || lower.contains("na czyj") || lower.contains("na czyje")
+
+        // „Opowiedz / powiedz coś o ulicy” → narracja historyczna, nie suchy adres.
+        let narrativeAboutStreet = placeWord && (
+            lower.contains("opowiedz") || lower.contains("opowiedz mi")
+            || (lower.contains("powiedz") && (lower.contains("cos o") || lower.contains("coś o")
+                || lower.contains(" o ulic") || lower.contains(" o tej") || lower.contains(" o tym")))
+            || lower.contains("co wiesz o") || lower.contains("co ciekawego o")
+        )
+
+        if narrativeAboutStreet { return true }
         guard historyWord else { return false }
-        // Wymagaj kontekstu ulicy/miejsca — sama „ciekawostka” idzie do tellTrivia.
-        return lower.contains("ulic") || lower.contains("miejsc") || lower.contains("drog")
-            || lower.contains("tej") || isAboutCurrentPlace(lower)
-            || lower.contains(" ta ") || lower.contains("o ulic") || lower.contains("o tej")
+        return placeWord
+    }
+
+    private static func isRemainingTravelTime(_ lower: String) -> Bool {
+        // Unikaj mylenia z paliwem / zasięgiem.
+        if lower.contains("paliw") || lower.contains("bak") || lower.contains("litr")
+            || lower.contains("zatank") || lower.contains("stacj") { return false }
+
+        let timeWord = lower.contains("czas") || lower.contains("ile jeszcze")
+            || lower.contains("ile zostalo") || lower.contains("ile zostało")
+            || lower.contains("kiedy dojade") || lower.contains("kiedy dojadę")
+            || lower.contains("kiedy bede") || lower.contains("kiedy będę")
+            || lower.contains("eta") || lower.contains("dojedziemy")
+            || lower.contains("dojade") || lower.contains("dojadę")
+            || lower.contains("minut do") || lower.contains("godzin do")
+            || lower.contains("pozostal") || lower.contains("pozostał")
+            || lower.contains("do konca") || lower.contains("do końca")
+            || lower.contains("do celu")
+
+        guard timeWord else { return false }
+
+        let routeWord = lower.contains("tras") || lower.contains("cel") || lower.contains("dojazd")
+            || lower.contains("dojez") || lower.contains("dojeż") || lower.contains("podroz")
+            || lower.contains("podróż") || lower.contains("jeszcze") || lower.contains("zostalo")
+            || lower.contains("zostało") || lower.contains("konca") || lower.contains("końca")
+            || lower.contains("eta") || lower.contains("przyjaz") || lower.contains("przyjazd")
+            || lower.contains("dojade") || lower.contains("dojadę") || lower.contains("dojedziemy")
+
+        // „ile czasu zostało” / „ile jeszcze” bez „paliwa” → ETA
+        if lower.contains("ile jeszcze") || lower.contains("ile czasu")
+            || lower.contains("ile zostalo czasu") || lower.contains("ile zostało czasu")
+            || lower.contains("czasu do") || lower.contains("czas do") {
+            return true
+        }
+        return routeWord
+    }
+
+    private static func isPosePuzzle(_ lower: String) -> Bool {
+        // `lower` jest już po foldForMatching (ł→l, bez diakrytyków).
+        // „łamigłówka” → „lamiglowka” (głó), nie „lamigowka”.
+        let keys = [
+            "lamiglowk", "lamigowk", "lamigufk", "lamigufka",
+            "zagadk", "zagadke", "zagadka", "zagadki",
+            "puzzle", "riddle", "quiz",
+            "myslow", "myslenia", "do pomyslenia", "cos do myslenia",
+            "daj zagadk", "daj lamig", "zadaj zagadk", "zadaj lamig",
+            "chce zagadk", "chce lamig", "chcialbym zagadk", "chcialbym lamig",
+            "porozwiazyw", "rozwiazujmy", "rozwiazywac", "rozwiazac zagadk",
+            "zagrajmy w zagadk", "zagrajmy zagadk", "kolejna zagadk", "kolejna lamig",
+            "nastepna zagadk", "nastepna lamig", "jeszcze zagadk", "jeszcze lamig",
+            "opowiedz zagadk", "powiedz zagadk"
+        ]
+        return keys.contains(where: { lower.contains($0) })
+    }
+
+    /// Publiczne — używane też w VoiceCommandProcessor (ratunek przed odmową).
+    static func looksLikePuzzleRequest(_ text: String) -> Bool {
+        let lower = folded(text)
+        if isRepeatPuzzle(lower) { return false }
+        return isPosePuzzle(lower)
+    }
+
+    static func looksLikeRepeatPuzzle(_ text: String) -> Bool {
+        isRepeatPuzzle(folded(text))
+    }
+
+    private static func isRepeatPuzzle(_ lower: String) -> Bool {
+        let puzzleBit = lower.contains("zagadk") || lower.contains("lamig")
+            || lower.contains("puzzle") || lower.contains("riddle")
+        let repeatBit = lower.contains("powtorz") || lower.contains("powtórz")
+            || lower.contains("powtorzenie") || lower.contains("jeszcze raz")
+            || lower.contains("od poczatku") || lower.contains("od początku")
+            || lower.contains("powiedz jeszcze raz") || lower.contains("przypomnij zagadk")
+            || lower.contains("przypomnij lamig") || lower.contains("powtorz mi")
+        if repeatBit && puzzleBit { return true }
+        // Samo „powtórz” gdy czekamy na odpowiedź / jest lastPuzzle — obsługuje VoiceCommandProcessor.
+        if puzzleBit && (lower.contains("ponownie") || lower.contains("znowu") || lower.contains("znow")) {
+            return true
+        }
+        return false
     }
 
     /// Żabka / Lewiatan / Empik / Sinsay / inne sieci — szukaj najbliższej od GPS.
@@ -925,6 +1665,66 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
         return 1
     }
 
+    private static func isReadVisibleTile(_ lower: String) -> Bool {
+        let readVerbs = [
+            "przeczytaj", "przeczytaj mi", "przeczytaj to", "przeczytaj mi to",
+            "odczytaj", "odczytaj mi", "odczytaj to", "odczytaj mi to",
+            "przeczytaj kafelek", "przeczytaj kafel", "przeczytaj karte", "przeczytaj kartę",
+            "co tu pisze", "co tu stoi", "co jest na kafelku", "co jest na kartce",
+            "read this", "read the tile", "read the card"
+        ]
+        if readVerbs.contains(where: { lower.contains($0) }) { return true }
+        // „przeczytaj mi” + wskazanie (to / ten / ta / kafelek)
+        if (lower.contains("przeczyt") || lower.contains("odczyt"))
+            && (lower.contains(" to") || lower.hasSuffix(" to") || lower.contains("ten ")
+                || lower.contains("ta ") || lower.contains("kafel") || lower.contains("kart")
+                || lower.contains("okienk") || lower.contains("panel")) {
+            return true
+        }
+        return false
+    }
+
+    /// `true` = zwiększ przezroczystość (35% regular); `false` = zmniejsz (90% regular).
+    private static func extractTilesTransparency(from lower: String) -> Bool? {
+        let mentionsTransparency =
+            lower.contains("przezroczyst") || lower.contains("przezroczystosc")
+            || lower.contains("transparent") || lower.contains("liquid glass")
+            || lower.contains("liquidglass") || lower.contains("szklo kafel")
+            || lower.contains("szkła kafel") || lower.contains("szkla kafel")
+
+        let mentionsTiles =
+            lower.contains("kafel") || lower.contains("tile") || lower.contains("panel")
+            || lower.contains("ui") || lower.contains("interfejs")
+
+        // „zwiększ przezroczystość (kafelków)”
+        if (lower.contains("zwieksz") || lower.contains("zwiększ") || lower.contains("zwiekszyc")
+            || lower.contains("zwiększyć"))
+            && mentionsTransparency {
+            return true
+        }
+        // „zmniejsz przezroczystość (kafelków)”
+        if (lower.contains("zmniejsz") || lower.contains("zmniejszyc") || lower.contains("zmniejszyć"))
+            && mentionsTransparency {
+            return false
+        }
+
+        // Parafrazy bez „zwiększ/zmniejsz”
+        if mentionsTiles || mentionsTransparency {
+            if lower.contains("bardziej przezroczyst") || lower.contains("bardziej transparent")
+                || lower.contains("bardziej clear") || lower.contains("mocniej przezroczyst") {
+                return true
+            }
+            if lower.contains("mniej przezroczyst") || lower.contains("mniej transparent")
+                || lower.contains("bardziej widocz") || lower.contains("solidniejsz")
+                || lower.contains("mocniejsze szkl") || lower.contains("mocniejsze glass")
+                || lower.contains("gęstsze szkl") || lower.contains("gesto szkl")
+                || lower.contains("regular glass") || lower.contains("90%") || lower.contains("80%") {
+                return false
+            }
+        }
+        return nil
+    }
+
     private static func extractChromeVisibility(from lower: String) -> (query: String, visible: Bool)? {
         let hideKeys = [
             "ukryj", "schowaj", "wyłącz", "wylacz", "hide", "ukryć", "ukryc",
@@ -992,22 +1792,47 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
         return (query, visible)
     }
 
+    /// Ogólne pytanie o korki na trasie / w okolicy — bez konkretnej nazwy ulicy.
+    private static func isGeneralRouteTrafficQuestion(_ lower: String) -> Bool {
+        if lower.contains("spodziew") { return true }
+        if lower.contains("szansa") && lower.contains("kork") { return true }
+        if lower.contains("na trasie") || lower.contains("po drodze") || lower.contains("do celu") {
+            return true
+        }
+        if lower.contains("gdzies") || lower.contains("gdzieś") { return true }
+        // „czy są korki” / „będą korki” bez „korki na ul. X”
+        if lower.contains("kork") || lower.contains("utrudn") {
+            let namedStreet = lower.contains("ulic") || lower.contains("ul.")
+                || (lower.contains(" na ") && !lower.contains("na trasie") && !lower.contains("na drodze"))
+            return !namedStreet
+        }
+        return false
+    }
+
     private static func isTraffic(_ lower: String) -> Bool {
         if lower.contains("korek") || lower.contains("korki") || lower.contains("utrudnien") {
             return true
         }
-        if lower.contains("zakork") || lower.contains("stoi") || lower.contains("stoją") || lower.contains("stoja")
-            || lower.contains("przeciez") || lower.contains("przecież") {
+        if lower.contains("spodziew") && (lower.contains("kork") || lower.contains("ruch") || lower.contains("utrudn")) {
             return true
         }
-        if lower.contains("ryzyko") || lower.contains("zagroz") { return true }
-        if lower.contains("ruch") && (lower.contains("ulic") || lower.contains("drog") || lower.contains("doklad")) {
+        if lower.contains("szansa") && lower.contains("kork") { return true }
+        if lower.contains("zakork") || lower.contains("utkne") || lower.contains("utknę") {
             return true
         }
-        // „jak szybko dojadę”, „ile się stoi”, „czy utknę” — tylko poza paliwem.
+        if lower.contains("ryzyko") && (lower.contains("kork") || lower.contains("ruch") || lower.contains("opozn")) {
+            return true
+        }
+        if lower.contains("ruch") && (
+            lower.contains("ulic") || lower.contains("drog") || lower.contains("tras")
+            || lower.contains("doklad") || lower.contains("spodziew") || lower.contains("ocen")
+        ) {
+            return true
+        }
+        // „jak szybko dojadę”, „ile się stoi” — tylko poza paliwem.
         let travelTime = lower.contains("jak szybko") || lower.contains("ile sie stoi")
-            || lower.contains("ile długo") || lower.contains("ile dlugo") || lower.contains("utkne")
-            || lower.contains("zakorkuje") || lower.contains("korki")
+            || lower.contains("ile długo") || lower.contains("ile dlugo")
+            || lower.contains("zakorkuje")
         let aboutFuel = lower.contains("paliw") || lower.contains("litro") || lower.contains("litr")
             || lower.contains("zuzyc") || lower.contains("spalan")
         return travelTime && !aboutFuel
@@ -1022,7 +1847,7 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
         let verbs = [
             "jedz", "jedziemy", "jedzmy",
             "zaprowadz", "zabierz", "wez mnie", "wezcie",
-            "prowadz", "pokieruj", "kieruj",
+            "poprowadz", "prowadz", "pokieruj", "kieruj",
             "nawiguj", "nawigacja", "nawigacje", "nawigowaniu",
             "trasa", "trase", "dojazd", "dojazdu",
             "znajdz", "wyznacz",
@@ -1030,9 +1855,10 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
             "chcialbym dotrzec", "chce dotrzec", "chce dojechac",
             "lec", "lecimy",
             "konfiguruj trase", "ustaw trase", "ustaw nawigacje",
-            "prowadz mnie", "zaprowadź mnie", "zaprowadz mnie",
-            "go to", "take me", "navigate", "drive to", "drive me",
-            "directions to", "route to"
+            "prowadz mnie", "poprowadz mnie", "zaprowadz mnie",
+            "nawiguj mnie",
+            "go to", "take me", "navigate", "navigate me", "drive to", "drive me",
+            "directions to", "route to", "route me"
         ]
         if verbs.contains(where: { lower.contains($0) }) { return true }
         if lower.hasPrefix("do ") || lower.hasPrefix("na ") {
@@ -1047,6 +1873,7 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
         if isWhereAmI(lower) || isStreetInfo(lower) || isStreetHistory(lower) || isTraffic(lower) { return true }
         if isFuelLevel(lower) || isFuelRange(lower) || isFuelCost(lower) || isNearestFuel(lower) { return true }
         if isFoodRequest(lower) || isSpeedLimit(lower) { return true }
+        if extractSavePlaceCommand(from: lower, lower: lower) != nil { return true }
         if isRecenterMap(lower) || isCapabilitiesHelp(lower) { return true }
         if lower.hasPrefix("na ile") || lower.hasPrefix("do ktorego") || lower.hasPrefix("do jakiego") { return true }
         return false
@@ -1224,41 +2051,46 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
     // MARK: - Extraction
 
     private static func extractDestination(_ text: String) -> String? {
-        // Dłuższe frazy najpierw
+        // Dłuższe frazy najpierw — matching na fold (ASR bez polskich znaków).
         let patterns = [
-            "zaprowadź mnie proszę na ", "zaprowadź mnie proszę do ",
             "zaprowadz mnie prosze na ", "zaprowadz mnie prosze do ",
-            "zaprowadź mnie na ", "zaprowadź mnie do ",
             "zaprowadz mnie na ", "zaprowadz mnie do ",
-            "zaprowadź na ", "zaprowadź do ", "zaprowadz na ", "zaprowadz do ",
+            "zaprowadz na ", "zaprowadz do ",
             "zabierz mnie na ", "zabierz mnie do ", "zabierz na ", "zabierz do ",
-            "weź mnie na ", "weź mnie do ", "wez mnie na ", "wez mnie do ",
-            "znajdź mi trasę do ", "znajdz mi trase do ",
-            "znajdź trasę do ", "znajdz trase do ", "znajdź drogę do ", "znajdz droge do ",
-            "wyznacz trasę do ", "wyznacz trase do ",
+            "wez mnie na ", "wez mnie do ",
+            "znajdz mi trase do ", "znajdz trase do ", "znajdz droge do ",
+            "wyznacz trase do ",
             "pokieruj mnie na ", "pokieruj mnie do ", "pokieruj na ", "pokieruj do ",
             "kieruj mnie na ", "kieruj mnie do ", "kieruj na ", "kieruj do ",
-            "prowadź mnie na ", "prowadź mnie do ", "prowadź na ", "prowadź do ",
-            "prowadz mnie na ", "prowadz mnie do ",
+            "poprowadz mnie prosze na ", "poprowadz mnie prosze do ",
+            "poprowadz mnie na ", "poprowadz mnie do ", "poprowadz na ", "poprowadz do ",
+            "prowadz mnie na ", "prowadz mnie do ", "prowadz na ", "prowadz do ",
+            "nawiguj mnie prosze na ", "nawiguj mnie prosze do ",
             "nawiguj mnie na ", "nawiguj mnie do ", "nawiguj na ", "nawiguj do ",
-            "trasa do ", "trasę do ", "trase do ", "dojazd do ",
-            "jedźmy na ", "jedźmy do ", "jedzmy na ", "jedzmy do ",
-            "jedź proszę na ", "jedź proszę do ", "jedz prosze na ", "jedz prosze do ",
-            "jedź na ", "jedź do ", "jedz na ", "jedz do ",
-            "leć na ", "leć do ", "lec na ", "lec do ",
-            "drive me to ", "take me to ", "navigate to ", "go to ",
+            "trasa do ", "trase do ", "dojazd do ",
+            "jedzmy na ", "jedzmy do ",
+            "jedz prosze na ", "jedz prosze do ",
+            "jedz na ", "jedz do ",
+            "lec na ", "lec do ",
+            "drive me to ", "take me to ", "navigate me to ", "navigate to ", "go to ",
+            "route me to ", "directions to ",
             "do ", "na "
         ]
-        let lower = text.lowercased()
+        let lower = folded(text)
         for pattern in patterns {
             if let range = lower.range(of: pattern) {
-                let start = text.index(
-                    text.startIndex,
-                    offsetBy: lower.distance(from: lower.startIndex, to: range.upperBound)
-                )
-                let dest = String(text[start...])
+                // Odtwórz offset na oryginale przez fold — bierzemy ogon po wzorcu z folded.
+                let destFold = String(lower[range.upperBound...])
                     .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-                if dest.count > 1 { return dest }
+                if destFold.count > 1 {
+                    // Preferuj oryginalną wielkość liter z końca wypowiedzi.
+                    if let orig = text.range(of: destFold, options: .caseInsensitive)
+                        ?? text.range(of: destFold.replacingOccurrences(of: "szkoly", with: "szkoły"), options: .caseInsensitive) {
+                        return String(text[orig.lowerBound...])
+                            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                    }
+                    return destFold
+                }
             }
         }
         return nil
@@ -1266,39 +2098,34 @@ private static func isSpeedLimit(_ lower: String) -> Bool {
 
     /// Usuwa wiodące słowa nawigacyjne, gdy wzorzec słownikowy nie trafił.
     private static func stripNavigationPrefix(_ text: String) -> String? {
-        var result = text
+        var fold = folded(text)
         let prefixes = [
-            "zaprowadź mnie proszę", "zaprowadz mnie prosze",
-            "zaprowadź mnie", "zaprowadz mnie", "zaprowadź", "zaprowadz",
-            "zabierz mnie", "zabierz", "weź mnie", "wez mnie",
+            "zaprowadz mnie prosze", "zaprowadz mnie", "zaprowadz",
+            "zabierz mnie", "zabierz", "wez mnie",
             "pokieruj mnie", "pokieruj", "kieruj mnie", "kieruj",
-            "prowadź mnie", "prowadz mnie", "prowadź", "prowadz",
-            "nawiguj mnie", "nawiguj",
-            "znajdź mi trasę", "znajdz mi trase", "znajdź trasę", "znajdz trase",
-            "wyznacz trasę", "wyznacz trase", "trasa", "trasę", "trase", "dojazd",
-            "jedźmy", "jedzmy", "jedź proszę", "jedz prosze", "jedź", "jedz",
-            "leć", "lec", "take me", "drive me", "navigate", "go"
+            "poprowadz mnie prosze", "poprowadz mnie", "poprowadz",
+            "prowadz mnie", "prowadz",
+            "nawiguj mnie prosze", "nawiguj mnie", "nawiguj",
+            "znajdz mi trase", "znajdz trase",
+            "wyznacz trase", "trasa", "trase", "dojazd",
+            "jedzmy", "jedz prosze", "jedz",
+            "lec", "take me", "drive me", "navigate me", "navigate", "go"
         ]
-        let lower = result.lowercased()
         for prefix in prefixes.sorted(by: { $0.count > $1.count }) {
-            if lower.hasPrefix(prefix) {
-                let idx = result.index(result.startIndex, offsetBy: prefix.count)
-                result = String(result[idx...])
+            if fold.hasPrefix(prefix) {
+                fold = String(fold.dropFirst(prefix.count))
                     .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
                 break
             }
         }
-        // Odetnij łączniki do/na
-        let lower2 = result.lowercased()
-        for link in ["na ", "do ", "w stronę ", "w strone ", "kierunek "] {
-            if lower2.hasPrefix(link) {
-                let idx = result.index(result.startIndex, offsetBy: link.count)
-                result = String(result[idx...])
+        for link in ["na ", "do ", "w strone ", "kierunek "] {
+            if fold.hasPrefix(link) {
+                fold = String(fold.dropFirst(link.count))
                     .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
                 break
             }
         }
-        return result.isEmpty ? nil : result
+        return fold.isEmpty ? nil : fold
     }
 
     private static func extractAfterKeywords(_ text: String, keywords: [String]) -> String? {
@@ -1387,6 +2214,19 @@ enum DriveIntentExecutor {
         case .tellTrivia:
             return DriveTriviaStore.nextSpokenFact()
 
+        case .remainingTravelTime:
+            return executeRemainingTravelTime()
+
+        case .posePuzzle(let categoryRaw):
+            let cat = categoryRaw.flatMap { DrivePuzzleService.Category(rawValue: $0) }
+            return DrivePuzzleService.shared.pose(category: cat)
+
+        case .repeatPuzzle:
+            if let spoken = DrivePuzzleService.shared.repeatLast() {
+                return spoken
+            }
+            return "Nie mam zagadki do powtórzenia. Powiedz „daj zagadkę”."
+
         case .findNearestStore(let query, let label):
             guard let coordinate = MapKitNavigationService.shared.location?.coordinate else {
                 return "Brak lokalizacji — nie mogę znaleźć \(label)."
@@ -1408,14 +2248,70 @@ enum DriveIntentExecutor {
         case .setChromeTile(let query, let visible):
             return executeChromeVisibility(query: query, visible: visible)
 
+        case .setTilesTransparency(let moreTransparent):
+            return DriveTileGlassStore.shared.setMoreTransparent(moreTransparent)
+
+        case .readVisibleTile:
+            return executeReadVisibleTile()
+
         case .recenterMap:
             return executeRecenterMap()
+
+        case .setRecording(let enabled):
+            return await DriveVoiceUIBridge.shared.setRecording(enabled: enabled)
+
+        case .setVolume(let level, let delta):
+            if let level {
+                return DriveVoiceUIBridge.shared.setVolume(level)
+            }
+            if let delta {
+                return DriveVoiceUIBridge.shared.adjustVolume(by: delta)
+            }
+            return "Powiedz na przykład: zwiększ głośność albo głośność na 50 procent."
+
+        case .setTravelMode(let mode):
+            return DriveVoiceUIBridge.shared.setTravelMode(mode)
+
+        case .setOverlayMode(let ar, let compass):
+            return executeOverlayMode(ar: ar, compass: compass)
 
         case .showCapabilities:
             return executeShowCapabilities()
 
+        case .savePlace(let slot, let customLabel, let replaceExisting, let query):
+            return await executeSavePlace(
+                slot: slot,
+                customLabel: customLabel,
+                replaceExisting: replaceExisting,
+                query: query
+            )
+
+        case .promptSavePlaceName(let label):
+            let canonical = SavedPlacesStore.canonicalLabel(for: label)
+            SavedPlaceNamePromptStore.shared.present(label: canonical)
+            let hint: String = {
+                switch SavedPlacesStore.normalizeAliasKey(DriveIntentQueryHelpers.foldForMatching(canonical)) {
+                case "dom", "home": return "Wpisz adres domu"
+                case "praca", "work": return "Wpisz adres pracy"
+                default: return "Wpisz nazwę — \(canonical.lowercased())"
+                }
+            }()
+            return "\(hint). Potem Zapisz albo Anuluj."
+
+        case .downloadOfflineMaps:
+            OfflineMapPromptStore.shared.present(
+                around: MapKitNavigationService.shared.location?.coordinate
+            )
+            return "Wybierz obszar mapy offline na mapie — domyślnie 10 kilometrów wokół Ciebie — i zatwierdź Pobierz."
+
         case .traffic(let query):
             do {
+                // „Czy gdzieś mogę się spodziewać korków?” → analiza aktywnej trasy + godzina.
+                let navigating = MapKitNavigationService.shared.mapState?.isNavigating == true
+                let routeFocused = query == nil || query?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+                if navigating, routeFocused {
+                    return await MapKitNavigationService.shared.analyzeActiveRouteTrafficRisk()
+                }
                 var coordinate = MapKitNavigationService.shared.location?.coordinate
                 if let query, !query.isEmpty {
                     let places = try await MapKitNavigationService.shared.searchPlaces(
@@ -1427,6 +2323,12 @@ enum DriveIntentExecutor {
                     }
                 }
                 guard let coordinate else { return "Brak lokalizacji do oceny ruchu." }
+                if navigating {
+                    // Nazwa ulicy na trasie — i tak daj kontekst trasy.
+                    return await MapKitNavigationService.shared.analyzeActiveRouteTrafficRisk(
+                        focusHint: query
+                    )
+                }
                 let snapshot = try await MapKitNavigationService.shared.trafficSnapshot(near: coordinate)
                 let lines = snapshot.split(separator: "\n").prefix(3).joined(separator: ". ")
                 return String(lines)
@@ -1478,6 +2380,12 @@ enum DriveIntentExecutor {
 
         case .speedLimit:
             return await executeSpeedLimit()
+
+        case .nextTurnInfo:
+            return executeNextTurnInfo()
+
+        case .preferManeuver(let direction):
+            return await MapKitNavigationService.shared.reroutePreferringManeuver(direction)
 
         case .streetHistory(let query):
             return await executeStreetInfoCard(query: query, historical: true, addressMode: false)
@@ -1623,7 +2531,7 @@ enum DriveIntentExecutor {
                 return reply
             }
 
-            // Źródła: PRG/OGC + Nominatim + Wikipedia — wynik narracyjny, bez kodów
+            // Źródła: PRG/OGC + Nominatim + Wikipedia — narracja historyczna, bez kodów
             var body: String
             if let coordinate,
                let knowledge = await PolishStreetKnowledgeService.lookup(
@@ -1632,39 +2540,69 @@ enum DriveIntentExecutor {
                    wantCuriosity: true
                ) {
                 title = knowledge.streetName
-                if knowledge.hasCuriosity {
-                    body = knowledge.cardBody
-                } else if let chat = CoreLM.makeChatSession() {
-                    let place = knowledge.narrativePlaceLabel
-                    let district = knowledge.osmContext.map { " (okolica: \($0))" } ?? ""
+                let place = knowledge.narrativePlaceLabel
+                let district = knowledge.osmContext.map { " (okolica: \($0))" } ?? ""
+                let wiki = knowledge.wikipediaExtract ?? ""
+
+                if AssistantModelPolicy.usesFoundationModels,
+                   (historical || knowledge.hasCuriosity),
+                   #available(iOS 26.0, *),
+                   let chat = CoreLM.makeChatSession() {
+                    let sourceBlock = wiki.isEmpty
+                        ? "Brak pewnego wpisu z Wikipedii — nie zmyślaj dat ani wydarzeń."
+                        : "Źródło (możesz streścić, nie dodawaj faktów spoza tekstu):\n\(wiki)"
                     let note = (try? await CoreLM.honestReply(
                         to: """
-                        Opowiedz 2–3 krótkie zdania o miejscu „\(place)”\(district) w Polsce.
-                        Priorytet: historyczna ciekawostka, pochodzenie nazwy, znane wydarzenie albo charakter okolicy.
-                        Brzmij jak przewodnik w aucie. BEZ kodów TERYT/SIMC, kodów pocztowych i żargonu rejestrów.
-                        Jeśli nie znasz pewnych faktów — powiedz to wprost, bez zmyślania dat.
+                        Jesteś przewodnikiem w aucie. Opowiedz 2–4 krótkie zdania HISTORYCZNE o „\(place)”\(district) w Polsce.
+                        Priorytet: pochodzenie / znaczenie nazwy, patron (jeśli ulica nosi imię osoby),
+                        kiedy powstała lub co ważne wydarzyło się w okolicy, charakter historyczny miejsca.
+                        \(sourceBlock)
+                        Brzmij naturalnie. BEZ kodów TERYT/SIMC, kodów pocztowych i żargonu rejestrów.
+                        Jeśli nie znasz pewnych faktów — powiedz to wprost.
                         """,
                         session: chat
                     )) ?? ""
-                    body = note.isEmpty ? knowledge.cardBody : note
+                    if !note.isEmpty {
+                        body = note
+                    } else {
+                        body = DeterministicBrainEngine.shared.narrateStreetHistory(
+                            place: place,
+                            wiki: wiki.isEmpty ? nil : wiki,
+                            district: knowledge.osmContext
+                        )
+                    }
                 } else {
-                    body = knowledge.cardBody
+                    body = DeterministicBrainEngine.shared.narrateStreetHistory(
+                        place: place,
+                        wiki: wiki.isEmpty ? nil : wiki,
+                        district: knowledge.osmContext
+                    )
                 }
             } else if historical {
-                if let chat = CoreLM.makeChatSession() {
+                if AssistantModelPolicy.usesFoundationModels,
+                   #available(iOS 26.0, *),
+                   let chat = CoreLM.makeChatSession() {
                     let note = (try? await CoreLM.honestReply(
                         to: """
-                        Podaj 2 zdania o historii lub charakterze miejsca „\(title)”\(addressHint.isEmpty ? "" : " (\(addressHint))") w Polsce.
-                        Naturalnie, bez kodów i numerów. Jeśli nie jesteś pewien faktów — powiedz to wprost.
+                        Podaj 2–3 zdania o HISTORII lub pochodzeniu nazwy miejsca „\(title)”\(addressHint.isEmpty ? "" : " (\(addressHint))") w Polsce.
+                        Naturalnie, bez kodów. Jeśli nie jesteś pewien faktów — powiedz to wprost.
                         Nie zmyślaj dat ani wydarzeń.
                         """,
                         session: chat
                     )) ?? ""
                     body = note.isEmpty
-                        ? "\(title). Nie mam pewnej historii tego miejsca."
+                        ? DeterministicBrainEngine.shared.narrateStreetHistory(
+                            place: title,
+                            wiki: nil,
+                            district: addressHint.isEmpty ? nil : addressHint
+                        )
                         : note
                 } else {
-                    body = "\(title)\(addressHint.isEmpty ? "" : ". \(addressHint)")."
+                    body = DeterministicBrainEngine.shared.narrateStreetHistory(
+                        place: title,
+                        wiki: nil,
+                        district: addressHint.isEmpty ? nil : addressHint
+                    )
                 }
             } else if !addressHint.isEmpty {
                 body = "\(title). \(addressHint)."
@@ -1813,34 +2751,181 @@ enum DriveIntentExecutor {
     }
 
     private static func executeRecenterMap() -> String {
-        guard let mapState = MapKitNavigationService.shared.mapState else {
+        guard MapKitNavigationService.shared.mapState != nil else {
             return "Nie mam aktywnej mapy do wyśrodkowania."
         }
-        // Na MainActor — ten sam efekt co przycisk wyśrodkowania.
-        mapState.recenterOnUser()
-        // Powtórz w następnym ticku UI — gdy MapDriveView był w AR / nie dostał GPS.
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            mapState.recenterOnUser()
-        }
-        if mapState.isNavigating {
+        // Najpierw UI (wyjście z AR/kompasu), potem twarde snapnięcie kamery.
+        DriveVoiceUIBridge.shared.request(.recenter)
+        if MapKitNavigationService.shared.mapState?.isNavigating == true {
             return "Wyśrodkowuję widok na Tobie."
         }
         return "Wyśrodkowuję mapę na Tobie."
     }
 
+    private static func executeOverlayMode(ar: Bool?, compass: Bool?) -> String {
+        let travel = DriveVoiceUIBridge.shared.settings?.travelMode
+            ?? (UserDefaults.standard.string(forKey: "travelMode").flatMap(TravelMode.init) ?? .car)
+        let navigating = MapKitNavigationService.shared.mapState?.isNavigating == true
+
+        if let ar {
+            guard travel == .car else {
+                return "Tryb AR jest dostępny w trybie samochodowym."
+            }
+            guard navigating else {
+                return "Najpierw uruchom nawigację, potem włączę AR."
+            }
+            DriveVoiceUIBridge.shared.request(.setAR(ar))
+            return ar ? "Włączam tryb AR." : "Wyłączam tryb AR."
+        }
+        if let compass {
+            guard travel == .bike else {
+                return "Kompas jest dostępny w trybie rowerowym."
+            }
+            guard navigating else {
+                return "Najpierw uruchom nawigację, potem włączę kompas."
+            }
+            DriveVoiceUIBridge.shared.request(.setCompass(compass))
+            return compass ? "Włączam tryb kompasu." : "Wyłączam tryb kompasu."
+        }
+        return "Powiedz: włącz AR, wyłącz AR, włącz kompas albo wyłącz kompas."
+    }
+
     static let capabilityItems: [String] = [
         "Nawigacja Apple Maps — trasa, start z GPS lub innego miejsca",
         "Auto-przeliczanie trasy po zjeździe z drogi",
-        "Korki i utrudnienia w okolicy",
-        "Info i ciekawostki o ulicy / miejscu",
+        "Zmiana manewru głosem — „chcę jechać prosto / w lewo na następnym skrzyżowaniu”",
+        "Korki na trasie — „czy gdzieś mogę się spodziewać korków” (analiza ETA + godzina)",
+        "Historia ulicy — „opowiedz o tej ulicy” / pochodzenie nazwy",
+        "Ile czasu zostało do celu — „ile jeszcze czasu”",
+        "Łamigówki — „nie wiem” = opcjonalna odpowiedź; „powtórz zagadkę”; kafelek do końca czytania",
+        "Model deterministyczny offline — do pobrania w ustawieniach (na iPhone < 15 Pro domyślny)",
         "Losowe ciekawostki na hasło „powiedz ciekawostkę”",
         "Paliwo: poziom baku, zasięg, koszt trasy, stacje",
         "Najbliższa restauracja, sklep (Żabka, Lewiatan…) i stacja paliw",
-        "Muzyka: pauza, play, następny, poprzedni",
-        "Wyśrodkowanie mapy, tryb AR i ukrywanie kafelków UI",
+        "Muzyka: pauza, play, następny, poprzedni / przewiń oraz głośność aplikacji",
+        "Nagrywanie — włącz / wyłącz",
+        "Tryb samochodowy / rowerowy, AR i kompas",
+        "Wyśrodkowanie mapy i ukrywanie kafelków UI",
+        "Kiedy i gdzie skręcić — rondo / skrzyżowanie",
+        "Zmiana manewru — „chcę na następnym skrzyżowaniu jechać prosto / w lewo”",
+        "Mapy offline — „pobierz mapy offline” (obszar ok. 10 km, wznawianie po utracie sieci)",
+        "Przezroczystość kafelków — „zwiększ” / „zmniejsz przezroczystość kafelków”",
+        "Odczyt kafelka — „przeczytaj mi to”",
+        "Zapisane miejsca — dom, praca i własne (Siri: Navigate to Home in DriveMate)",
         "Przywrócenie przerwanej trasy"
     ]
+
+    private static func executeSavePlace(
+        slot: SavedPlaceSlot,
+        customLabel: String?,
+        replaceExisting: Bool,
+        query: String?
+    ) async -> String {
+        let store = SavedPlacesStore.shared
+        if !replaceExisting {
+            if slot == .home, store.home != nil {
+                return "Dom już mam zapisany. Powiedz „zmień mój dom”, albo usuń go w ustawieniach Drive Mate."
+            }
+            if slot == .work, store.work != nil {
+                return "Pracę już mam zapisaną. Powiedz „zmień moją pracę”, albo usuń ją w ustawieniach Drive Mate."
+            }
+        }
+
+        let coordinate: CLLocationCoordinate2D
+        var resolvedAddress = ""
+        var mapPlaceName = ""
+
+        if let query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let queries = await PlaceNameTranslator.searchQueries(from: query)
+            var found = try? await MapKitNavigationService.shared.findFirstPlace(
+                query: queries.primary,
+                near: MapKitNavigationService.shared.location?.coordinate
+            )
+            if found == nil, queries.fallback != queries.primary {
+                found = try? await MapKitNavigationService.shared.findFirstPlace(
+                    query: queries.fallback,
+                    near: MapKitNavigationService.shared.location?.coordinate
+                )
+            }
+            guard let found else {
+                return "Nie znalazłem miejsca „\(query)” do zapisania."
+            }
+            coordinate = CLLocationCoordinate2D(latitude: found.latitude, longitude: found.longitude)
+            mapPlaceName = found.name
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Adres z nazwą (UKEN) — łatwiej znaleźć głosem i w ustawieniach.
+            if found.address.localizedCaseInsensitiveContains(q) || found.name.localizedCaseInsensitiveContains(q) {
+                resolvedAddress = found.address.isEmpty ? found.name : "\(found.name), \(found.address)"
+            } else {
+                resolvedAddress = found.address.isEmpty ? q : "\(q), \(found.address)"
+            }
+        } else {
+            guard let here = MapKitNavigationService.shared.location?.coordinate else {
+                return "Brak lokalizacji — nie zapiszę miejsca."
+            }
+            coordinate = here
+            if let placemark = try? await MapKitNavigationService.shared.reverseGeocode(coordinate: here) {
+                let street = [placemark.thoroughfare, placemark.subThoroughfare]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+                let city = placemark.locality ?? ""
+                resolvedAddress = [street, city].filter { !$0.isEmpty }.joined(separator: ", ")
+                if resolvedAddress.isEmpty {
+                    resolvedAddress = placemark.name ?? ""
+                }
+            }
+        }
+
+        let label = (customLabel?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? (slot == .custom ? (mapPlaceName.isEmpty ? slot.polishLabel : mapPlaceName) : slot.polishLabel)
+        // Ciche EN — użytkownik tego nie widzi; Siri dostaje angielskie nazwy entity.
+        let englishName = await PlaceNameTranslator.toEnglish(label)
+        let englishAddress = resolvedAddress.isEmpty
+            ? ""
+            : await PlaceNameTranslator.toEnglish(resolvedAddress)
+
+        let saved = store.upsert(
+            slot: slot,
+            label: label,
+            englishName: englishName,
+            address: resolvedAddress,
+            englishAddress: englishAddress,
+            coordinate: coordinate
+        )
+        let whereText: String = {
+            if let query, !query.isEmpty {
+                let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !mapPlaceName.isEmpty, mapPlaceName.caseInsensitiveCompare(q) != .orderedSame {
+                    return "\(q) — \(mapPlaceName)"
+                }
+                return q
+            }
+            return saved.address.isEmpty ? "tej lokalizacji" : saved.address
+        }()
+        if replaceExisting || slot == .custom {
+            return "Zapamiętałem: \(saved.label) to \(whereText). Powiedz „jedź do \(saved.label.lowercased())”."
+        }
+        return "Zapamiętałem \(saved.label.lowercased()) — \(whereText). Usuniesz to w ustawieniach Drive Mate."
+    }
+
+    private static func executeNextTurnInfo() -> String {
+        let mapState = MapKitNavigationService.shared.mapState
+        let coord = MapKitNavigationService.shared.location?.coordinate
+        guard let mapState else {
+            return "Nie mam aktywnej mapy nawigacji."
+        }
+        return mapState.spokenNextTurnAdvice(userCoordinate: coord)
+    }
+
+    private static func executeReadVisibleTile() -> String {
+        guard let snap = DriveVisibleTileReader.currentSnapshot() else {
+            return "Nie widzę teraz kafelka do przeczytania. Otwórz info, ofertę albo skręt — i powtórz."
+        }
+        if snap.holdsInfoCard {
+            DriveInfoCardStore.shared.holdForReading()
+        }
+        return snap.speechText
+    }
 
     private static func executeShowCapabilities() -> String {
         // Krótka pauza, żeby TTS zdążył zacząć zanim okienko się pojawi.
@@ -2007,6 +3092,66 @@ private static func executeFuelRange() async -> String {
     return reply
 }
 
+/// Pozostały czas do celu z aktywnej trasy — skala dystansu × expectedTravelTime.
+private static func executeRemainingTravelTime() -> String {
+    guard let mapState = MapKitNavigationService.shared.mapState,
+          mapState.isNavigating,
+          let route = mapState.route else {
+        return "Nie mam aktywnej trasy — najpierw ustaw cel nawigacji."
+    }
+
+    let totalDistance = max(route.distance, 1)
+    let totalTime = max(route.expectedTravelTime, 1)
+
+    let remainingMeters: Double = {
+        if let remaining = RouteGeometry.remainingDistanceMeters(
+            along: route.polyline,
+            from: MapKitNavigationService.shared.location?.coordinate
+        ), remaining > 0 {
+            return remaining
+        }
+        return totalDistance
+    }()
+
+    let fraction = min(1, max(0, remainingMeters / totalDistance))
+    let seconds = totalTime * fraction
+    let spoken = formatRemainingDuration(seconds)
+
+    let dest = mapState.destinationTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if dest.isEmpty {
+        return "Do końca trasy zostało około \(spoken)."
+    }
+    return "Do \(dest) zostało około \(spoken)."
+}
+
+private static func formatRemainingDuration(_ seconds: TimeInterval) -> String {
+    let total = Int(seconds.rounded())
+    if total < 45 { return "mniej niż minutę" }
+    let minutes = (total + 30) / 60
+    if minutes < 60 {
+        if minutes == 1 { return "1 minutę" }
+        if minutes % 10 >= 2 && minutes % 10 <= 4 && (minutes % 100 < 10 || minutes % 100 >= 20) {
+            return "\(minutes) minuty"
+        }
+        return "\(minutes) minut"
+    }
+    let hours = minutes / 60
+    let rem = minutes % 60
+    let hourWord: String = {
+        if hours == 1 { return "1 godzinę" }
+        if hours % 10 >= 2 && hours % 10 <= 4 && (hours % 100 < 10 || hours % 100 >= 20) {
+            return "\(hours) godziny"
+        }
+        return "\(hours) godzin"
+    }()
+    if rem == 0 { return hourWord }
+    if rem == 1 { return "\(hourWord) i 1 minutę" }
+    if rem % 10 >= 2 && rem % 10 <= 4 && (rem % 100 < 10 || rem % 100 >= 20) {
+        return "\(hourWord) i \(rem) minuty"
+    }
+    return "\(hourWord) i \(rem) minut"
+}
+
 /// Pozostały dystans do celu z aktywnej trasy (km) — nil gdy brak trasy.
 private static func currentRouteDistanceKm() -> Double? {
     guard let mapState = MapKitNavigationService.shared.mapState,
@@ -2049,11 +3194,72 @@ private static func currentRouteDistanceKm() -> Double? {
     private static func executeNavigate(destination: String, start: NavigateStartOrigin?) async -> String {
         // Konfiguracja trasy — bez mini-mapki podglądu.
         MapComplianceStore.shared.clear()
+
+        // Znany alias (szkoła/dom/…) bez zapisu — nie zgaduj MapKit / innego miejsca.
+        if SavedPlacesStore.isKnownRoleAlias(destination),
+           SavedPlacesStore.shared.resolve(spokenQuery: destination) == nil {
+            let label = SavedPlacesStore.canonicalLabel(for: destination)
+            return "Nie mam jeszcze zapisanego miejsca „\(label)”. Powiedz „tutaj jest moja \(label.lowercased())” albo „zapamiętaj moją \(label.lowercased())”."
+        }
+
+        // Dom / praca / zapisane miejsce — od razu po współrzędnych.
+        if let saved = SavedPlacesStore.shared.resolve(spokenQuery: destination) {
+            let first = MapKitNavigationService.PlaceResult(
+                name: saved.label,
+                address: saved.address,
+                latitude: saved.latitude,
+                longitude: saved.longitude,
+                category: "saved"
+            )
+            NotificationCenter.default.post(
+                name: .driveMateDidSelectDestination,
+                object: nil,
+                userInfo: [
+                    "title": first.name,
+                    "subtitle": first.address,
+                    "lat": first.latitude,
+                    "lon": first.longitude
+                ]
+            )
+            switch start {
+            case .myLocation:
+                return await startRoute(to: first, fromLatitude: nil, fromLongitude: nil, startLabel: "Twojej lokalizacji")
+            case .place(let startQuery):
+                guard let origin = try? await MapKitNavigationService.shared.findFirstPlace(
+                    query: startQuery,
+                    near: MapKitNavigationService.shared.location?.coordinate
+                ) else {
+                    MapKitNavigationService.shared.setPendingDestination(first)
+                    return "Cel: \(first.name). Nie znalazłem startu „\(startQuery)”. Skąd jedziemy?"
+                }
+                return await startRoute(
+                    to: first,
+                    fromLatitude: origin.latitude,
+                    fromLongitude: origin.longitude,
+                    startLabel: origin.name
+                )
+            case nil:
+                if UserDefaults.standard.bool(forKey: "alwaysUseMyLocation") {
+                    return await startRoute(to: first, fromLatitude: nil, fromLongitude: nil, startLabel: "Twojej lokalizacji")
+                }
+                MapKitNavigationService.shared.setPendingDestination(first)
+                return "\(first.name). Skąd jedziemy — z Twojej lokalizacji, czy z innego miejsca?"
+            }
+        }
+
         do {
-            guard let first = try await MapKitNavigationService.shared.findFirstPlace(
-                query: destination,
+            let queries = await PlaceNameTranslator.searchQueries(from: destination)
+            var first = try await MapKitNavigationService.shared.findFirstPlace(
+                query: queries.primary,
                 near: MapKitNavigationService.shared.location?.coordinate
-            ) else {
+            )
+            if first == nil, queries.fallback != queries.primary {
+                first = try await MapKitNavigationService.shared.findFirstPlace(
+                    query: queries.fallback,
+                    near: MapKitNavigationService.shared.location?.coordinate
+                )
+            }
+            guard let first else {
                 return "Nie znalazłem miejsca „\(destination)” — sprawdź nazwę albo podaj dokładniejszy adres."
             }
 

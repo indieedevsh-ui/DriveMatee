@@ -67,11 +67,44 @@ final class AppSettings: ObservableObject {
         didSet { objectWillChange.send() }
     }
 
+    /// Tryb jazdy (samochód / rower) — ustawiany m.in. tagiem NFC.
+    @AppStorage("travelMode") var travelModeRaw: String = TravelMode.car.rawValue {
+        didSet { objectWillChange.send() }
+    }
+
+    /// Preferowany tryb asystenta (na iPhone < 15 Pro i tak wymuszany jest deterministyczny).
+    @AppStorage("assistantInferenceMode") var assistantInferenceModeRaw: String = "" {
+        didSet {
+            objectWillChange.send()
+            NotificationCenter.default.post(name: .assistantInferenceModeDidChange, object: nil)
+        }
+    }
+
     var volumeDidChange: ((Double) -> Void)?
+
+    var assistantInferenceMode: AssistantInferenceMode {
+        get {
+            if let stored = AssistantInferenceMode(rawValue: assistantInferenceModeRaw), !assistantInferenceModeRaw.isEmpty {
+                return stored
+            }
+            return DeviceCapability.supportsFoundationModelsHardware ? .foundation : .deterministic
+        }
+        set { assistantInferenceModeRaw = newValue.rawValue }
+    }
+
+    /// Skuteczny tryb po uwzględnieniu sprzętu.
+    var effectiveAssistantMode: AssistantInferenceMode {
+        DeviceCapability.supportsFoundationModelsHardware ? assistantInferenceMode : .deterministic
+    }
 
     var musicSource: MusicSource {
         get { MusicSource(rawValue: musicSourceRaw) ?? .local }
         set { musicSourceRaw = newValue.rawValue }
+    }
+
+    var travelMode: TravelMode {
+        get { TravelMode(rawValue: travelModeRaw) ?? .car }
+        set { travelModeRaw = newValue.rawValue }
     }
 
     var appearance: AppAppearance {

@@ -32,6 +32,14 @@ enum DriveSemanticMatcher {
         case food
         case navigation
         case speedLimit
+        case nextTurnInfo
+        case preferStraight
+        case preferLeft
+        case preferRight
+        case saveHome
+        case saveWork
+        case updateHome
+        case updateWork
         case cancelRoute
         case musicPause
         case musicNext
@@ -39,11 +47,28 @@ enum DriveSemanticMatcher {
         case setCarModel
         case pastVisit
         case chromeVisibility
+        case tilesMoreTransparent
+        case tilesLessTransparent
+        case readVisibleTile
         case recenterMap
+        case recordingOn
+        case recordingOff
+        case volumeUp
+        case volumeDown
+        case travelModeCar
+        case travelModeBike
+        case arOn
+        case arOff
+        case compassOn
+        case compassOff
         case showCapabilities
+        case downloadOfflineMaps
         case restoreRoute
         case cancelListening
         case tellTrivia
+        case remainingTravelTime
+        case posePuzzle
+        case repeatPuzzle
     }
 
     private static let anchors: [Concept: [String]] = [
@@ -117,24 +142,26 @@ enum DriveSemanticMatcher {
         .streetInfo: [
             "co to za ulica",
             "informacje o tej ulicy",
-            "powiedz coś o tej ulicy",
             "opisz tę ulicę",
             "dane o tej ulicy",
-            "co wiesz o tej ulicy",
             "charakterystyka ulicy",
             "co tu się znajduje",
-            "opisz okolicę",
-            "opowiedz o tym miejscu"
+            "opisz okolicę"
         ],
         .streetHistory: [
             "historia tej ulicy",
             "skąd nazwa tej ulicy",
             "opowiedz historię ulicy",
+            "opowiedz coś o tej ulicy",
+            "powiedz coś o tej ulicy",
+            "co wiesz o tej ulicy",
+            "opowiedz o tym miejscu",
             "ciekawostka o tej ulicy",
             "kiedy zbudowano tę ulicę",
             "co się tu wydarzyło",
             "historia tego miejsca",
-            "ciekawostki o tym miejscu"
+            "ciekawostki o tym miejscu",
+            "pochodzenie nazwy ulicy"
         ],
         .traffic: [
             "czy są korki",
@@ -143,7 +170,12 @@ enum DriveSemanticMatcher {
             "sprawdź korki w okolicy",
             "ocena ryzyka korków",
             "czy utknę",
-            "jak szybko dojadę"
+            "jak szybko dojadę",
+            "czy gdzieś mogę się spodziewać korków",
+            "spodziewam się korków na trasie",
+            "jest szansa na korki",
+            "czy będą korki",
+            "jakie jest ryzyko korków"
         ],
         .food: [
             "jestem głodny",
@@ -169,6 +201,57 @@ enum DriveSemanticMatcher {
             "ile mogę jechać",
             "limit prędkości na tej drodze",
             "jaka jest maksymalna prędkość"
+        ],
+        .nextTurnInfo: [
+            "kiedy mam skręcić",
+            "gdzie mam skręcić",
+            "na jakim rondzie skręcam",
+            "na jakim skrzyżowaniu skręcić",
+            "jaki jest następny skręt",
+            "za ile mam skręcić",
+            "który zjazd z ronda"
+        ],
+        .preferStraight: [
+            "chciałbym pojechać prosto na następnym skrzyżowaniu",
+            "chcę jechać prosto na następnym",
+            "jedź prosto na następnym skrzyżowaniu",
+            "nie skręcaj jedź prosto",
+            "zamiast skręcać jedź prosto",
+            "na następnym skrzyżowaniu prosto"
+        ],
+        .preferLeft: [
+            "chcę skręcić w lewo na następnym skrzyżowaniu",
+            "jedź w lewo na następnym",
+            "zamiast w prawo skręć w lewo",
+            "na następnym skrzyżowaniu w lewo"
+        ],
+        .preferRight: [
+            "chcę skręcić w prawo na następnym skrzyżowaniu",
+            "jedź w prawo na następnym",
+            "zamiast w lewo skręć w prawo",
+            "na następnym skrzyżowaniu w prawo"
+        ],
+        .saveHome: [
+            "tutaj jest mój dom",
+            "tu jest mój dom",
+            "to jest mój dom"
+        ],
+        .saveWork: [
+            "tutaj jest moja praca",
+            "tu jest moja praca",
+            "to jest moja praca"
+        ],
+        .updateHome: [
+            "zmień mój dom",
+            "zaktualizuj dom",
+            "zmień lokalizację domu",
+            "zapamiętaj mój dom"
+        ],
+        .updateWork: [
+            "zmień moją pracę",
+            "zaktualizuj pracę",
+            "zmień lokalizację pracy",
+            "zapamiętaj moją pracę"
         ],
         .cancelRoute: [
             "anuluj trasę",
@@ -212,6 +295,30 @@ enum DriveSemanticMatcher {
             "wyłącz ten kafelek",
             "przywróć kafelek wyśrodkuj"
         ],
+        .tilesMoreTransparent: [
+            "zwiększ przezroczystość kafelków",
+            "zwiększ przezroczystość",
+            "zrób kafelki bardziej przezroczyste",
+            "bardziej przezroczyste kafelki",
+            "bardziej transparentne kafelki"
+        ],
+        .tilesLessTransparent: [
+            "zmniejsz przezroczystość kafelków",
+            "zmniejsz przezroczystość",
+            "zrób kafelki mniej przezroczyste",
+            "mniej przezroczyste kafelki",
+            "mocniejsze szkło na kafelkach",
+            "bardziej widoczne kafelki"
+        ],
+        .readVisibleTile: [
+            "przeczytaj mi to",
+            "przeczytaj to",
+            "przeczytaj kafelek",
+            "odczytaj mi to",
+            "co tu pisze",
+            "co jest na kafelku",
+            "przeczytaj mi ten kafelek"
+        ],
         .recenterMap: [
             "wyśrodkuj mi widok",
             "wyśrodkuj mapę",
@@ -222,6 +329,62 @@ enum DriveSemanticMatcher {
             "pokaż mnie na mapie",
             "recenter map"
         ],
+        .recordingOn: [
+            "włącz nagrywanie",
+            "zacznij nagrywać",
+            "start nagrywania",
+            "nagrywaj"
+        ],
+        .recordingOff: [
+            "wyłącz nagrywanie",
+            "zatrzymaj nagrywanie",
+            "stop nagrywania",
+            "zakończ nagrywanie"
+        ],
+        .volumeUp: [
+            "zwiększ głośność",
+            "głośniej",
+            "podgłośnij",
+            "głośność wyżej"
+        ],
+        .volumeDown: [
+            "zmniejsz głośność",
+            "ciszej",
+            "ścisz",
+            "głośność niżej"
+        ],
+        .travelModeCar: [
+            "tryb samochodowy",
+            "włącz tryb samochodu",
+            "przełącz na samochód",
+            "tryb auto"
+        ],
+        .travelModeBike: [
+            "tryb rowerowy",
+            "włącz tryb roweru",
+            "przełącz na rower",
+            "tryb rower"
+        ],
+        .arOn: [
+            "włącz AR",
+            "włącz tryb AR",
+            "uruchom AR"
+        ],
+        .arOff: [
+            "wyłącz AR",
+            "wyłącz tryb AR",
+            "wyjdź z AR"
+        ],
+        .compassOn: [
+            "włącz kompas",
+            "włącz tryb kompasu",
+            "tryb kompasu"
+        ],
+        .compassOff: [
+            "wyłącz kompas",
+            "wyłącz tryb kompasu",
+            "wyjdź z kompasu"
+        ],
         .showCapabilities: [
             "co potrafisz",
             "co umiesz",
@@ -231,6 +394,12 @@ enum DriveSemanticMatcher {
             "jakie masz funkcje",
             "lista komend",
             "what can you do"
+        ],
+        .downloadOfflineMaps: [
+            "pobierz mapy offline",
+            "ściągnij mapę offline",
+            "pobierz mapę do offline",
+            "download offline maps"
         ],
         .restoreRoute: [
             "przywróć poprzednią trasę",
@@ -251,6 +420,45 @@ enum DriveSemanticMatcher {
             "powiedz coś ciekawego",
             "chcę usłyszeć ciekawostkę",
             "losowa ciekawostka"
+        ],
+        .remainingTravelTime: [
+            "ile jeszcze czasu",
+            "ile czasu zostało do celu",
+            "kiedy dojadę",
+            "ile zostało do końca trasy",
+            "za ile minut będę na miejscu",
+            "jaki jest eta",
+            "ile minut do celu",
+            "jak długo jeszcze jedziemy"
+        ],
+        .posePuzzle: [
+            "daj zagadkę",
+            "daj łamigówkę",
+            "daj łamigłówkę",
+            "zadaj łamigówkę",
+            "zadaj łamigłówkę",
+            "chcę zagadkę",
+            "chcę łamigówkę",
+            "łamigówka",
+            "łamigłówka",
+            "zagadka matematyczna",
+            "łamigówka fantasy",
+            "zagadka naukowa",
+            "zagadka filozoficzna",
+            "rozwiązujmy zagadki",
+            "opowiedz zagadkę",
+            "daj puzzle",
+            "coś do myślenia",
+            "kolejna zagadka"
+        ],
+        .repeatPuzzle: [
+            "powtórz zagadkę",
+            "powtórz łamigówkę",
+            "powtórz łamigłówkę",
+            "powiedz zagadkę jeszcze raz",
+            "przypomnij zagadkę",
+            "zagadka jeszcze raz",
+            "powtórz puzzle"
         ]
     ]
 
@@ -261,7 +469,8 @@ enum DriveSemanticMatcher {
     private static func threshold(for concept: Concept) -> Double {
         switch concept {
         case .fuelCost, .fuelLevel, .fuelRange, .fuelStation, .cheapestFuel,
-             .streetInfo, .streetHistory, .whereAmI, .recenterMap, .showCapabilities:
+             .streetInfo, .streetHistory, .whereAmI, .recenterMap, .showCapabilities,
+             .remainingTravelTime, .posePuzzle, .repeatPuzzle:
             return acceptanceThreshold - 0.06
         case .navigation:
             // Nawigacja semantyczna bywa zbyt agresywna („widok” → miejsce).
@@ -384,6 +593,8 @@ if score < 0.6, let bestWord = vectors.first?.0 {
             return base * 0.95
         case .restoreRoute, .cancelRoute:
             return context.isNavigating ? base : base * 0.6
+        case .preferStraight, .preferLeft, .preferRight:
+            return context.isNavigating ? base * 1.08 : base * 0.55
         case .traffic:
             return base * (context.isNavigating ? 1.05 : 0.95)
         case .streetInfo, .whereAmI:
@@ -438,6 +649,22 @@ if score < 0.6, let bestWord = vectors.first?.0 {
             return .navigate(destination: destination, start: nil)
         case .speedLimit:
             return .speedLimit
+        case .nextTurnInfo:
+            return .nextTurnInfo
+        case .preferStraight:
+            return .preferManeuver(direction: .straight)
+        case .preferLeft:
+            return .preferManeuver(direction: .left)
+        case .preferRight:
+            return .preferManeuver(direction: .right)
+        case .saveHome:
+            return .savePlace(slot: .home, customLabel: nil, replaceExisting: true, query: nil)
+        case .saveWork:
+            return .savePlace(slot: .work, customLabel: nil, replaceExisting: true, query: nil)
+        case .updateHome:
+            return .promptSavePlaceName(label: "Dom")
+        case .updateWork:
+            return .promptSavePlaceName(label: "Praca")
         case .cancelRoute:
             return .cancelRoute
         case .musicPause:
@@ -452,16 +679,51 @@ if score < 0.6, let bestWord = vectors.first?.0 {
             return .navigateToPastVisit(daysAgo: 1)
         case .chromeVisibility:
             return nil
+        case .tilesMoreTransparent:
+            return .setTilesTransparency(moreTransparent: true)
+        case .tilesLessTransparent:
+            return .setTilesTransparency(moreTransparent: false)
+        case .readVisibleTile:
+            return .readVisibleTile
         case .recenterMap:
             return .recenterMap
+        case .recordingOn:
+            return .setRecording(enabled: true)
+        case .recordingOff:
+            return .setRecording(enabled: false)
+        case .volumeUp:
+            return .setVolume(level: nil, delta: 0.12)
+        case .volumeDown:
+            return .setVolume(level: nil, delta: -0.12)
+        case .travelModeCar:
+            return .setTravelMode(.car)
+        case .travelModeBike:
+            return .setTravelMode(.bike)
+        case .arOn:
+            return .setOverlayMode(ar: true, compass: nil)
+        case .arOff:
+            return .setOverlayMode(ar: false, compass: nil)
+        case .compassOn:
+            return .setOverlayMode(ar: nil, compass: true)
+        case .compassOff:
+            return .setOverlayMode(ar: nil, compass: false)
         case .showCapabilities:
             return .showCapabilities
+        case .downloadOfflineMaps:
+            return .downloadOfflineMaps
         case .restoreRoute:
             return .restoreInterruptedRoute
         case .cancelListening:
             return .cancelListening
         case .tellTrivia:
             return .tellTrivia
+        case .remainingTravelTime:
+            return .remainingTravelTime
+        case .posePuzzle:
+            let fold = DriveIntentQueryHelpers.foldForMatching(phrase)
+            return .posePuzzle(categoryRaw: DrivePuzzleService.category(fromFolded: fold)?.rawValue)
+        case .repeatPuzzle:
+            return .repeatPuzzle
         }
     }
 
@@ -483,6 +745,14 @@ if score < 0.6, let bestWord = vectors.first?.0 {
         case "food": return .food
         case "navigation": return .navigation
         case "speedLimit": return .speedLimit
+        case "nextTurnInfo": return .nextTurnInfo
+        case "preferStraight": return .preferStraight
+        case "preferLeft": return .preferLeft
+        case "preferRight": return .preferRight
+        case "saveHome": return .saveHome
+        case "saveWork": return .saveWork
+        case "updateHome": return .updateHome
+        case "updateWork": return .updateWork
         case "cancelRoute": return .cancelRoute
         case "musicPause": return .musicPause
         case "musicNext": return .musicNext
@@ -490,11 +760,28 @@ if score < 0.6, let bestWord = vectors.first?.0 {
         case "setCarModel": return .setCarModel
         case "pastVisit": return .pastVisit
         case "chromeVisibility": return .chromeVisibility
+        case "tilesMoreTransparent": return .tilesMoreTransparent
+        case "tilesLessTransparent": return .tilesLessTransparent
+        case "readVisibleTile": return .readVisibleTile
         case "recenterMap": return .recenterMap
+        case "recordingOn": return .recordingOn
+        case "recordingOff": return .recordingOff
+        case "volumeUp": return .volumeUp
+        case "volumeDown": return .volumeDown
+        case "travelModeCar": return .travelModeCar
+        case "travelModeBike": return .travelModeBike
+        case "arOn": return .arOn
+        case "arOff": return .arOff
+        case "compassOn": return .compassOn
+        case "compassOff": return .compassOff
         case "showCapabilities": return .showCapabilities
+        case "downloadOfflineMaps": return .downloadOfflineMaps
         case "restoreRoute": return .restoreRoute
         case "cancelListening": return .cancelListening
         case "tellTrivia": return .tellTrivia
+        case "remainingTravelTime": return .remainingTravelTime
+        case "posePuzzle": return .posePuzzle
+        case "repeatPuzzle": return .repeatPuzzle
         default: return nil
         }
     }

@@ -41,11 +41,11 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         }
     }
 
-    private var session: LanguageModelSession?
+    private var session: Any?
     /// CoreLM — osobna sesja do strukturalnego rozumienia komend.
-    private var coreLMSession: LanguageModelSession?
+    private var coreLMSession: Any?
     /// Czat bez tools — uczciwe odpowiedzi na luźne pytania.
-    private var chatSession: LanguageModelSession?
+    private var chatSession: Any?
     private let asr = PolishSpeechRecognizer()
     private let synthesizer = AVSpeechSynthesizer()
     private var hideAvatarTask: Task<Void, Never>?
@@ -108,6 +108,24 @@ final class DriveMateAssistant: NSObject, ObservableObject {
                 self?.resumeCaptureAfterWakeTraining()
             }
         }
+        NotificationCenter.default.addObserver(
+            forName: .assistantInferenceModeDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.bootstrapSession()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .deterministicBrainPackDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.bootstrapSession()
+            }
+        }
     }
 
     private func pauseCaptureForWakeTraining() {
@@ -153,6 +171,37 @@ final class DriveMateAssistant: NSObject, ObservableObject {
     // MARK: - Foundation Model
 
     func bootstrapSession() {
+        // Poniżej iPhone 15 Pro (oraz gdy użytkownik wybrał tryb deterministyczny) — bez Foundation Models.
+        if AssistantModelPolicy.usesDeterministic {
+            session = nil
+            coreLMSession = nil
+            chatSession = nil
+            // Seed zawsze w aplikacji; pełna paczka rozszerza słowniki po pobraniu w ustawieniach.
+            isModelReady = true
+            DeterministicBrainEngine.shared.reloadFromDisk()
+            state = .idle
+            if DeterministicBrainPackService.shared.isInstalled {
+                reply = "Drive Mate gotowy — model deterministyczny (pełna paczka, offline)."
+            } else {
+                reply = "Drive Mate gotowy — model deterministyczny (offline). W ustawieniach możesz pobrać pełną paczkę słowników i łamigówek."
+            }
+            return
+        }
+
+        if #available(iOS 26.0, *) {
+            bootstrapFoundationModelsSession()
+        } else {
+            isModelReady = DeterministicBrainPackService.shared.isInstalled
+            session = nil
+            coreLMSession = nil
+            chatSession = nil
+            state = .idle
+            reply = "Foundation Models wymagają iOS 26. Używam modelu deterministycznego."
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func bootstrapFoundationModelsSession() {
         let model = SystemLanguageModel.default
         switch model.availability {
         case .available:
@@ -416,11 +465,17 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
         // Muzyka zostaje spauzowana do końca odpowiedzi asystenta.
         let hasWake = containsWakeWord(trimmed)
-        let stripped = stripWakeWord(from: trimmed)
-        let command = hasWake ? stripped : trimmed
+        let stripped = meaningfulCommand(afterWake: stripWakeWord(from: trimmed))
+        let command: String? = {
+            if hasWake { return stripped }
+            let folded = normalizeWakeText(trimmed)
+            if DriveIntentParser.isNoiseOrFiller(folded) { return nil }
+            return trimmed
+        }()
 
-        guard !command.isEmpty else {
+        guard let command, !command.isEmpty else {
             if hasWake {
+                // Obudził, ale bez komendy — słuchaj dalej, nie mów „nie umiem”.
                 activateListening()
             } else {
                 endListeningWithoutCommand(spoken: "Nie usłyszałem. Powiedz Hey Drive i spróbuj ponownie.")
@@ -433,7 +488,7 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
     private func handleWakeSpottingTranscript(_ text: String, fromPartial: Bool) {
         let hasWake = containsWakeWord(text)
-        let stripped = stripWakeWord(from: text)
+        let stripped = meaningfulCommand(afterWake: stripWakeWord(from: text))
 
         guard hasWake else {
             if !fromPartial {
@@ -443,7 +498,27 @@ final class DriveMateAssistant: NSObject, ObservableObject {
             return
         }
 
-        guard !wakeTriggerLocked else { return }
+        // Partial ASR często dokleja śmieci („hey drive a”) — nie uruchamiaj komendy,
+        // tylko otwórz słuchanie. Komendę bierzemy z finalu albo z dyktafonu.
+        if fromPartial {
+            guard !wakeTriggerLocked else { return }
+            wakeTriggerLocked = true
+            isWakeListening = false
+            wakeRestartTask?.cancel()
+            let player = music ?? MusicPlayerService.shared
+            player.duckForAssistant(true, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
+            activateListening()
+            return
+        }
+
+        guard !wakeTriggerLocked else {
+            // Już słuchamy po partialu — jeśli final ma pełną komendę, wykonaj ją.
+            if isCapturingCommand, let stripped, !stripped.isEmpty {
+                finishDictation(with: text)
+            }
+            return
+        }
+
         wakeTriggerLocked = true
         isWakeListening = false
         wakeRestartTask?.cancel()
@@ -452,16 +527,32 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         let player = music ?? MusicPlayerService.shared
         player.duckForAssistant(true, autoMuteEnabled: settings?.autoMuteEnabled ?? true)
 
-        if stripped.isEmpty {
-            activateListening()
-        } else {
+        if let stripped, !stripped.isEmpty {
             // „Hey Drive jedź na Wawel” — od razu komenda, bez drugiej sesji.
             asr.cancel()
             showAvatar()
             fadeSiriGlow(to: 1, duration: 0.22)
             isCapturingCommand = false
             Task { await handleCommand(stripped) }
+        } else {
+            activateListening()
         }
+    }
+
+    /// Po strip wake: odrzuć resztki ASR („mate”, „drive”, „a”) jako brak komendy.
+    private func meaningfulCommand(afterWake stripped: String) -> String? {
+        let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard !trimmed.isEmpty else { return nil }
+        let folded = normalizeWakeText(trimmed)
+        let remnants: Set<String> = [
+            "mate", "drive", "drajw", "draj", "dryve", "draif", "draiw",
+            "drivemate", "drajwmejt", "a", "aj", "ok", "hej", "hey", "hei", "ej"
+        ]
+        if remnants.contains(folded) { return nil }
+        if DriveIntentParser.isNoiseOrFiller(folded) { return nil }
+        // Za krótkie po obudzeniu — raczej szum niż komenda.
+        if folded.count < 3 { return nil }
+        return trimmed
     }
 
     private func scheduleWakeSpotting(after delay: TimeInterval) {
@@ -671,8 +762,9 @@ final class DriveMateAssistant: NSObject, ObservableObject {
             isCapturingCommand = false
             wakeTriggerLocked = false
             fadeSiriGlow(to: 0.55, duration: 0.35)
-            speak(result.reply, keepListeningAfter: false)
-            if result.didApplySideEffect {
+            // „Przeczytaj mi to” — spokojniejsze tempo; inne odpowiedzi lekko szybciej.
+            speak(result.reply, keepListeningAfter: false, faster: !result.calmSpeech, calm: result.calmSpeech)
+            if result.didApplySideEffect, !result.calmSpeech {
                 hideAvatarTask?.cancel()
                 hideAvatarTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 700_000_000)
@@ -696,11 +788,11 @@ final class DriveMateAssistant: NSObject, ObservableObject {
 
     // MARK: - TTS / audio
 
-    private func speak(_ text: String, keepListeningAfter: Bool, faster: Bool = false) {
+    private func speak(_ text: String, keepListeningAfter: Bool, faster: Bool = false, calm: Bool = false) {
         keepListeningAfterSpeech = keepListeningAfter
         synthesizer.stopSpeaking(at: .immediate)
 
-        // Muzyka w dół / pauza — głos asystenta zostaje na pełnej głośności.
+        // Muzyka mocno w dół (bez pauzy) — głos asystenta zostaje na pełnej głośności.
         let player = music ?? MusicPlayerService.shared
         let duckEnabled = settings?.autoMuteEnabled ?? true
         player.duckForAssistant(true, autoMuteEnabled: duckEnabled)
@@ -712,21 +804,29 @@ final class DriveMateAssistant: NSObject, ObservableObject {
         utterance.voice = AVSpeechSynthesisVoice(language: "pl-PL")
         utterance.volume = 1.0
         let base = AVSpeechUtteranceDefaultSpeechRate
-        utterance.rate = faster ? base * 1.08 : base * 0.98
+        if calm {
+            utterance.rate = base * 0.88
+            utterance.pitchMultiplier = 1.0
+        } else {
+            utterance.rate = faster ? base * 1.08 : base * 0.98
+        }
 
         state = .speaking
         synthesizer.speak(utterance)
     }
 
-    /// Pełna głośność TTS — zejście z playAndRecord/voiceChat (ten tryb ściszał głos).
+    /// Pełna głośność TTS; duckOthers ścisza Apple Music / inne apki (lokalną ściszamy ręcznie).
     private func prepareSpeechAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            // Bez duckOthers na sesji — muzykę ściszamy osobno; TTS ma iść pełną mocą.
-            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setCategory(
+                .playback,
+                mode: .spokenAudio,
+                options: [.duckOthers, .mixWithOthers]
+            )
             try session.setActive(true, options: [])
         } catch {
-            try? session.setCategory(.playback, mode: .default, options: [])
+            try? session.setCategory(.playback, mode: .default, options: [.duckOthers, .mixWithOthers])
             try? session.setActive(true, options: [])
         }
     }

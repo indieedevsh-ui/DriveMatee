@@ -6,5 +6,22 @@
 	<array>
 		<string>spotify</string>
 	</array>
+	<key>NFCReaderUsageDescription</key>
+	<string>DriveMate odczytuje i koduje tagi NFC, aby przełączać tryb samochodowy lub rowerowy.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>DriveMate odczytuje tętno z aplikacji Zdrowie / Apple Watch w trybie rowerowym (Stats).</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>DriveMate korzysta z danych zdrowotnych wyłącznie do podglądu tętna podczas jazdy rowerem.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.michaldawidwoltosz.DriveMate.nfc</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>drivemate</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

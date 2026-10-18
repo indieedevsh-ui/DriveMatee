@@ -3,6 +3,8 @@ import SwiftUI
 /// Kafelek liquid glass ze strzałką skrętu i odległością / „tutaj”.
 struct TurnGuidanceTile: View {
     let guidance: NextTurnGuidance
+    /// Tryb rowerowy — znacznie większy kafelek skrętu.
+    var enlarged: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var bounce: CGFloat = 0
@@ -11,28 +13,28 @@ struct TurnGuidanceTile: View {
     private var foreground: Color { isLight ? .black : .white }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: enlarged ? 12 : 8) {
             Image(systemName: guidance.direction.symbolName)
-                .font(.system(size: 30, weight: .bold))
+                .font(.system(size: enlarged ? 52 : 30, weight: .bold))
                 .foregroundStyle(foreground)
                 .shadow(color: .black.opacity(isLight ? 0.12 : 0.35), radius: 2, y: 1)
                 .offset(y: bounce)
-                .frame(height: 36)
+                .frame(height: enlarged ? 64 : 36)
 
             Text(guidance.distanceLabel)
-                .font(.system(size: guidance.isImminent ? 16 : 14, weight: .heavy, design: .rounded))
+                .font(.system(size: enlarged ? (guidance.isImminent ? 24 : 20) : (guidance.isImminent ? 16 : 14), weight: .heavy, design: .rounded))
                 .foregroundStyle(foreground)
                 .monospacedDigit()
                 .minimumScaleFactor(0.8)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(minWidth: 84)
+        .padding(.horizontal, enlarged ? 22 : 14)
+        .padding(.vertical, enlarged ? 18 : 12)
+        .frame(minWidth: enlarged ? 132 : 84)
         .background {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color.black.opacity(isLight ? 0.14 : 0))
-                .liquidGlassRect(cornerRadius: 18, .clear.interactive())
+                .driveTileGlassRect(cornerRadius: 18, interactive: true)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)

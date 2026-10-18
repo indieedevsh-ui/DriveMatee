@@ -92,20 +92,22 @@ enum DriveIntentQueryHelpers {
 
     /// Usuwa wiodące czasowniki nawigacyjne, zostawiając nazwę celu.
     static func stripNavigationWords(_ raw: String) -> String {
-        var text = raw.lowercased().replacingOccurrences(of: "?", with: " ")
+        var text = foldForMatching(raw).replacingOccurrences(of: "?", with: " ")
         let prefixes = [
             "zaprowadz mnie prosze", "zaprowadz mnie", "zaprowadz",
             "zabierz mnie", "zabierz", "wez mnie", "wez",
             "pokieruj mnie", "pokieruj", "kieruj mnie", "kieruj",
-            "prowadz mnie", "prowadz", "nawiguj mnie", "nawiguj",
+            "poprowadz mnie prosze", "poprowadz mnie", "poprowadz",
+            "prowadz mnie prosze", "prowadz mnie", "prowadz",
+            "nawiguj mnie prosze", "nawiguj mnie", "nawiguj",
             "znajdz mi trase", "znajdz trase", "znajdz", "wyznacz trase", "wyznacz",
-            "trasa", "trasę", "dojazd", "dojazdu", "jedzmy", "jedz prosze", "jedz",
+            "trasa", "trase", "dojazd", "dojazdu", "jedzmy", "jedz prosze", "jedz",
             "pojedzmy", "pojedz", "lecimy", "lecmy", "lec",
             "chce dotrzec do", "chcialbym dotrzec do", "chce dojechac do",
-            "chce dojechać do", "dotrzec do", "dojechac do", "dojechać do",
-            "jak dojechac do", "jak dojechać do", "jak dojechać",
-            "poprowadz mnie do", "poprowadź mnie do",
-            "take me to", "drive me to", "navigate to", "go to"
+            "dotrzec do", "dojechac do",
+            "jak dojechac do", "jak dojechac",
+            "take me to", "drive me to", "navigate me to", "navigate to", "go to",
+            "route me to", "directions to"
         ]
         for prefix in prefixes {
             if text.hasPrefix(prefix + " ") {
@@ -114,7 +116,7 @@ enum DriveIntentQueryHelpers {
             }
             if text == prefix { return "" }
         }
-        for link in ["do ", "na ", "w strone ", "w stronę "] {
+        for link in ["do ", "na ", "w strone "] {
             if text.hasPrefix(link) {
                 text = String(text.dropFirst(link.count))
                 break

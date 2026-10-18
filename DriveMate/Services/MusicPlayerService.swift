@@ -185,7 +185,10 @@ final class MusicPlayerService: ObservableObject {
         _ = play()
     }
 
-    /// Hey Drive / asystent: płynnie pauzuj; po odpowiedzi — płynnie wznów.
+    /// Poziom muzyki przy głosie asystenta (bez pauzy — tylko mocne ściszenie).
+    private static let assistantDuckVolume: Float = 0.05
+
+    /// Hey Drive / asystent: mocno ścisz muzykę (NIE pauzuj); głos TTS zostaje pełny.
     func duckForAssistant(_ shouldDuck: Bool, autoMuteEnabled: Bool = true) {
         guard autoMuteEnabled else {
             if isDucked || pausedForAssistant {
@@ -203,68 +206,52 @@ final class MusicPlayerService: ObservableObject {
         }
     }
 
-    /// Płynne wyciszenie → pauza (lokalne + Apple Music).
+    /// Płynne mocne ściszenie — odtwarzanie trwa (lokalne + duck sesji dla Apple Music).
     private func holdMusicForAssistant() {
         fadeTask?.cancel()
         isDucked = true
+        pausedForAssistant = false
         MusicSourceController.shared.holdPlaybackForAssistant()
 
         guard MusicSourceController.shared.source == .local else { return }
         guard let player, player.isPlaying || isPlaying else { return }
 
-        let startVol = player.volume
+        let startVol = max(player.volume, volume)
+        let target = Self.assistantDuckVolume
         fadeTask = Task { @MainActor in
-            let steps = 10
+            let steps = 8
             for step in 1...steps {
                 guard !Task.isCancelled else { return }
                 let t = Float(step) / Float(steps)
-                player.volume = startVol * (1 - t)
-                try? await Task.sleep(nanoseconds: 28_000_000)
+                player.volume = startVol + (target - startVol) * t
+                try? await Task.sleep(nanoseconds: 22_000_000)
             }
             guard !Task.isCancelled else { return }
-            player.pause()
-            pausedForAssistant = true
-            isPlaying = false
+            player.volume = target
+            // Świadomie BEZ pause — muzyka gra dalej pod głosem.
             objectWillChange.send()
             MusicSourceController.shared.syncPlayingState()
         }
     }
 
-    /// Wznów odtwarzanie z płynnym fade-in po asystencie.
+    /// Przywróć głośność muzyki po TTS (nadal bez pauzy/wznowienia).
     private func releaseMusicAfterAssistant() {
         fadeTask?.cancel()
         isDucked = false
         MusicSourceController.shared.releasePlaybackAfterAssistant()
-
-        guard MusicSourceController.shared.source == .local else {
-            pausedForAssistant = false
-            return
-        }
-        guard pausedForAssistant else {
-            player?.volume = volume
-            return
-        }
         pausedForAssistant = false
 
-        configureSession()
+        guard MusicSourceController.shared.source == .local else { return }
         guard let player else { return }
-        player.volume = 0
-        let started = player.play()
-        isPlaying = started
-        objectWillChange.send()
-        MusicSourceController.shared.syncPlayingState()
-        guard started else {
-            player.volume = volume
-            return
-        }
 
+        let startVol = player.volume
         let target = volume
         fadeTask = Task { @MainActor in
             let steps = 12
             for step in 1...steps {
                 guard !Task.isCancelled else { return }
                 let t = Float(step) / Float(steps)
-                player.volume = target * t
+                player.volume = startVol + (target - startVol) * t
                 try? await Task.sleep(nanoseconds: 30_000_000)
             }
             guard !Task.isCancelled else { return }

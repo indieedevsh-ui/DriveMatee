@@ -144,16 +144,15 @@ struct MapDriveView: View {
     @ObservedObject var location: LocationSpeedService
     @ObservedObject var mapState: NavigationMapState
     var isDark: Bool
-    /// Gdy panel muzyki jest widoczny — pastylka Legal unosi się wyżej.
-    var musicBarVisible: Bool = false
+    /// Dolny offset pastylki Legal — ten sam co kompas / recenter w DriveView.
+    var floatingChromeBottomPad: CGFloat = 22
     /// Wyrównanie do chrome (sidebar) — lekko odklejone od lewej treści.
     var leadingChrome: CGFloat = 168
+    /// Portrait: wysokość dolnego paska zakładek.
+    var bottomChrome: CGFloat = 0
     var onUserInteraction: (() -> Void)? = nil
 
     @State private var showLegal = false
-
-    /// Ten sam dolny offset co przycisk „Zakończ trasę”.
-    private var legalBottomPadding: CGFloat { musicBarVisible ? 118 : 22 }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -201,8 +200,8 @@ struct MapDriveView: View {
             }
             .buttonStyle(.plain)
             .padding(.leading, leadingChrome + 10)
-            .padding(.bottom, legalBottomPadding)
-            .animation(.spring(response: 0.42, dampingFraction: 0.86), value: musicBarVisible)
+            .padding(.bottom, floatingChromeBottomPad)
+            .animation(.spring(response: 0.42, dampingFraction: 0.86), value: floatingChromeBottomPad)
         }
         .onAppear {
             location.requestAccessAndStart()
@@ -342,7 +341,60 @@ struct AppleMapsView: UIViewRepresentable {
         private var pendingDrawProgress: CGFloat = 0
         private var lastBounceToken: Int = -1
         private var lastRecenterRequestID: Int = 0
+        private var hardRecenterPending = false
+        /// Po głosowym/przyciskowym recenter trzymaj kamerę na userze przez chwilę (kolejne ticki GPS).
+        private var stickyRecenterUntil: Date?
+        private var recenterObserver: NSObjectProtocol?
+        private weak var mapView: MKMapView?
         private weak var flagView: MKMarkerAnnotationView?
+
+        override init() {
+            super.init()
+            recenterObserver = NotificationCenter.default.addObserver(
+                forName: .driveMateRecenterRequested,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.hardRecenterPending = true
+                self.stickyRecenterUntil = Date().addingTimeInterval(2.8)
+                self.lastFollowCoord = nil
+                guard let map = self.mapView else { return }
+                let coord = map.userLocation.location?.coordinate
+                    ?? MapKitNavigationService.shared.location?.coordinate
+                guard let coord else { return }
+                self.applyRecenterCamera(on: map, to: coord, navigating: self.isNavigating)
+                self.hardRecenterPending = false
+            }
+        }
+
+        deinit {
+            if let recenterObserver {
+                NotificationCenter.default.removeObserver(recenterObserver)
+            }
+        }
+
+        private func applyRecenterCamera(
+            on map: MKMapView,
+            to coordinate: CLLocationCoordinate2D,
+            navigating: Bool
+        ) {
+            lastFollowCoord = coordinate
+            lastFocus = navigating ? .follow : .user
+            map.setUserTrackingMode(.none, animated: false)
+            let distance: CLLocationDistance = navigating ? 850 : 1000
+            let heading = map.userLocation.location?.course ?? 0
+            let useCourse = navigating && heading >= 0
+            let camera = MKMapCamera(
+                lookingAtCenter: coordinate,
+                fromDistance: distance,
+                pitch: navigating ? 42 : 0,
+                heading: useCourse ? heading : 0
+            )
+            // setCamera + setCenter — podwójny sygnał, gdy gesty/AR zostawiły mapę „zablokowaną”.
+            map.setCamera(camera, animated: true)
+            map.setCenter(coordinate, animated: true)
+        }
 
         @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
             onUserInteraction?()
@@ -378,14 +430,24 @@ struct AppleMapsView: UIViewRepresentable {
             destinationFlagBounceToken: Int,
             recenterRequestID: Int
         ) {
+            mapView = map
             pendingDrawProgress = routeDrawProgress
 
             // Nie „zużywaj” tokena, dopóki nie mamy GPS — inaczej głosowe wyśrodkowanie
             // przepada, gdy update przyjdzie chwilę przed współrzędną.
+            let resolvedUser = userCoordinate
+                ?? map.userLocation.location?.coordinate
+            let sticky = stickyRecenterUntil.map { Date() < $0 } ?? false
             let pendingRecenter = recenterRequestID != lastRecenterRequestID && recenterRequestID > 0
-            let forceRecenter = pendingRecenter && userCoordinate != nil
+                || hardRecenterPending
+                || sticky
+            let forceRecenter = pendingRecenter && resolvedUser != nil
             if forceRecenter {
-                lastRecenterRequestID = recenterRequestID
+                if recenterRequestID != lastRecenterRequestID && recenterRequestID > 0 {
+                    stickyRecenterUntil = Date().addingTimeInterval(2.8)
+                }
+                lastRecenterRequestID = max(recenterRequestID, lastRecenterRequestID)
+                hardRecenterPending = false
                 lastFollowCoord = nil
             }
 
@@ -480,22 +542,12 @@ struct AppleMapsView: UIViewRepresentable {
                 return
             }
 
-            if forceRecenter, let userCoordinate {
-                lastFollowCoord = userCoordinate
-                lastFocus = isNavigating ? .follow : .user
-                let distance: CLLocationDistance = isNavigating ? 850 : 1000
-                let camera = MKMapCamera(
-                    lookingAtCenter: userCoordinate,
-                    fromDistance: distance,
-                    pitch: 0,
-                    heading: 0
-                )
-                // setCamera jest pewniejsze niż UIView.animate na MKMapCamera przy głosie.
-                map.setCamera(camera, animated: true)
+            if forceRecenter, let userCoordinate = resolvedUser {
+                applyRecenterCamera(on: map, to: userCoordinate, navigating: isNavigating)
                 if isNavigating { return }
             }
 
-            if isNavigating, isFollowingUser, let userCoordinate {
+            if isNavigating, isFollowingUser, let userCoordinate = resolvedUser {
                 let movedEnough: Bool = {
                     guard let last = lastFollowCoord else { return true }
                     let a = CLLocation(latitude: last.latitude, longitude: last.longitude)
@@ -505,17 +557,7 @@ struct AppleMapsView: UIViewRepresentable {
                 // Po głosowym recenter (token już zużyty) i tak trzymaj follow przy ruchu.
                 let shouldSnap = cameraFocus == .user || lastFocus != .follow || pendingRecenter
                 if movedEnough || shouldSnap {
-                    lastFollowCoord = userCoordinate
-                    lastFocus = .follow
-                    map.setCamera(
-                        MKMapCamera(
-                            lookingAtCenter: userCoordinate,
-                            fromDistance: 850,
-                            pitch: 0,
-                            heading: 0
-                        ),
-                        animated: true
-                    )
+                    applyRecenterCamera(on: map, to: userCoordinate, navigating: true)
                 }
                 return
             }

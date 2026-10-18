@@ -1,7 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// Clear liquid glass — pastylka (UIGlassEffect.clear) z opcjonalnym niebieskim podświetleniem.
+/// Clear liquid glass — pastylka (UIGlassEffect.clear na iOS 26+) z opcjonalnym niebieskim podświetleniem.
+/// Na iOS 18–25: ultraThin blur.
 struct ClearLiquidGlass: UIViewRepresentable {
     var blueIntensity: CGFloat = 0
 
@@ -19,8 +20,7 @@ final class ClearGlassView: UIView {
     private var blueIntensity: CGFloat = 0
 
     override init(frame: CGRect) {
-        let effect = UIGlassEffect(style: .clear)
-        glassView = UIVisualEffectView(effect: effect)
+        glassView = UIVisualEffectView(effect: Self.makeBaseEffect())
         super.init(frame: frame)
         isUserInteractionEnabled = false
         clipsToBounds = true
@@ -66,16 +66,27 @@ final class ClearGlassView: UIView {
         }
     }
 
+    private static func makeBaseEffect() -> UIVisualEffect {
+        if #available(iOS 26.0, *) {
+            return UIGlassEffect(style: .clear)
+        }
+        return UIBlurEffect(style: .systemUltraThinMaterialDark)
+    }
+
     private func applyBlueTint() {
         let t = blueIntensity
-        let effect = UIGlassEffect(style: .clear)
-        effect.tintColor = UIColor(
-            red: 0.35 + 0.15 * (1 - t),
-            green: 0.78 + 0.12 * (1 - t),
-            blue: 1.0,
-            alpha: 0.15 + 0.55 * t
-        )
-        glassView.effect = effect
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .clear)
+            effect.tintColor = UIColor(
+                red: 0.35 + 0.15 * (1 - t),
+                green: 0.78 + 0.12 * (1 - t),
+                blue: 1.0,
+                alpha: 0.15 + 0.55 * t
+            )
+            glassView.effect = effect
+        } else {
+            glassView.effect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+        }
         tintView.backgroundColor = UIColor(red: 0.40, green: 0.85, blue: 1.0, alpha: 0.08 + 0.42 * t)
         rimView.layer.borderColor = UIColor(
             red: 0.70 + 0.1 * t,

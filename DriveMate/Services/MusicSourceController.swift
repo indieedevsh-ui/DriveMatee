@@ -170,25 +170,18 @@ final class MusicSourceController: ObservableObject {
         command
     }
 
-    /// Pauza Apple Music na czas asystenta (MusicKit — zgodne z polityką).
+    /// Apple Music: nie pauzujemy — ściszenie robi AVAudioSession.duckOthers przy TTS.
     func holdPlaybackForAssistant() {
+        // Flaga tylko informacyjna; odtwarzanie zostaje.
         guard source == .appleMusic else { return }
         let player = ApplicationMusicPlayer.shared
-        if player.state.playbackStatus == .playing {
-            player.pause()
-            appleMusicHeldForAssistant = true
-            isPlaying = false
-        }
+        appleMusicHeldForAssistant = (player.state.playbackStatus == .playing)
     }
 
-    /// Wznów Apple Music po odpowiedzi asystenta.
+    /// Po TTS — nic do wznawiania (muzyka nie była pauzowana).
     func releasePlaybackAfterAssistant() {
-        guard source == .appleMusic, appleMusicHeldForAssistant else { return }
         appleMusicHeldForAssistant = false
-        Task {
-            try? await ApplicationMusicPlayer.shared.play()
-            syncPlayingState()
-        }
+        syncPlayingState()
     }
 
     /// Otwórz Spotify — zgodnie z polityką (bez nieoficjalnego sterowania).

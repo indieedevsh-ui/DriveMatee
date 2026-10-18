@@ -4,11 +4,12 @@ import SwiftUI
 struct DriveMatePanel: View {
     @ObservedObject var assistant: DriveMateAssistant
     var guidance: NextTurnGuidance?
+    var enlargedTurnTile: Bool = false
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
             if let guidance, guidance.showsTurnTile {
-                TurnGuidanceTile(guidance: guidance)
+                TurnGuidanceTile(guidance: guidance, enlarged: enlargedTurnTile)
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
             } else {
                 eyesActivateButton
@@ -67,7 +68,7 @@ struct DriveMateEyesButtonLabel: View {
             } else {
                 Capsule(style: .continuous)
                     .fill(Color.black.opacity(isLight ? 0.14 : 0))
-                    .liquidGlassCapsule(.clear.interactive())
+                    .driveTileGlassCapsule(interactive: true)
             }
         }
         .overlay {

@@ -404,18 +404,111 @@ final class NavigationMapState: ObservableObject {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.78)) {
             showRecenterButton = false
         }
-        // Osobny token — MapDriveView zawsze snapuje, nawet gdy focus już był `.follow`.
-        // (Głos i przycisk idą tą samą ścieżką.)
-        recenterRequestID &+= 1
-        cameraFocus = .user
-        if isNavigating {
-            cameraFocus = .follow
-        }
+        // Najpierw fokus, potem token + notification — mapa nie może „zgubić” prośby.
+        cameraFocus = isNavigating ? .follow : .user
         objectWillChange.send()
+        recenterRequestID &+= 1
+        NotificationCenter.default.post(name: .driveMateRecenterRequested, object: nil)
+        // Drugi impuls po krótkiej chwili (mapa po AR / pierwszym layoucie).
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            self.isFollowingUser = true
+            self.cameraFocus = self.isNavigating ? .follow : .user
+            self.recenterRequestID &+= 1
+            self.objectWillChange.send()
+            NotificationCenter.default.post(name: .driveMateRecenterRequested, object: nil)
+        }
     }
 
     func consumeTurnAnnouncement() {
         turnAnnouncement = nil
+    }
+
+    /// Następny manewr + dystans — także gdy kafelek skrętu jeszcze niewidoczny (>350 m).
+    func nextManeuverSnapshot(userCoordinate: CLLocationCoordinate2D?) -> (maneuver: TurnManeuver, distanceMeters: CLLocationDistance)? {
+        guard isNavigating else { return nil }
+        let coord = userCoordinate
+            ?? MapKitNavigationService.shared.location?.coordinate
+        guard let coord else { return nil }
+        let user = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        guard let next = turnManeuvers.first(where: { !passedManeuverIDs.contains($0.id) }) else {
+            return nil
+        }
+        let distance = user.distance(
+            from: CLLocation(latitude: next.coordinate.latitude, longitude: next.coordinate.longitude)
+        )
+        return (next, distance)
+    }
+
+    /// Spokojna odpowiedź głosowa: kiedy i gdzie skręcić.
+    func spokenNextTurnAdvice(userCoordinate: CLLocationCoordinate2D?) -> String {
+        guard isNavigating else {
+            return "Nie mam aktywnej trasy — najpierw wybierz cel."
+        }
+        guard let snap = nextManeuverSnapshot(userCoordinate: userCoordinate) else {
+            return "Do celu jedziesz już bez kolejnego skrętu — trzymaj się trasy."
+        }
+        let m = snap.maneuver
+        let distance = snap.distanceMeters
+        let place = Self.spokenIntersectionLabel(from: m.instruction)
+        let when: String = {
+            if distance <= 40 {
+                return "teraz"
+            }
+            if distance < 1000 {
+                let meters = Int((distance / 10).rounded() * 10)
+                return "za \(max(meters, 10)) metrów"
+            }
+            let km = distance / 1000
+            return String(format: km >= 10 ? "za %.0f kilometrów" : "za %.1f kilometra", km)
+        }()
+
+        var parts: [String] = []
+        if m.direction == .straight {
+            parts.append("\(when.prefix(1).uppercased())\(when.dropFirst()) na \(place) jedź prosto.")
+        } else {
+            parts.append("Skręć \(m.direction.spoken) \(when) — na \(place).")
+        }
+        let detail = m.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty, detail.count <= 140 {
+            let foldedDetail = DriveIntentQueryHelpers.foldForMatching(detail)
+            let foldedPlace = DriveIntentQueryHelpers.foldForMatching(place)
+            if !foldedDetail.contains(foldedPlace) || detail.count > place.count + 8 {
+                parts.append(detail)
+            }
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// „rondzie …”, „skrzyżowaniu z ul. …”, albo ogólne „najbliższym skrzyżowaniu”.
+    private static func spokenIntersectionLabel(from instruction: String) -> String {
+        let raw = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folded = DriveIntentQueryHelpers.foldForMatching(raw)
+
+        if folded.contains("rondo") {
+            if let r = raw.range(of: #"(?i)rond[oa]\s+[^,.]+"#, options: .regularExpression) {
+                var label = String(raw[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if label.lowercased().hasPrefix("rondo") {
+                    // „rondo X” → „rondzie X”
+                    label = "rondzie" + label.dropFirst(5)
+                }
+                return label
+            }
+            return "najbliższym rondzie"
+        }
+
+        // „Skręć w lewo w ulicę Floriańską” / „na skrzyżowaniu z …”
+        if let r = raw.range(of: #"(?i)(?:w|na)\s+ulic[ęea]\s+[^,.]+"#, options: .regularExpression) {
+            let street = String(raw[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return "skrzyżowaniu \(street)"
+        }
+        if let r = raw.range(of: #"(?i)skrzyżowani[ua]\s+[^,.]+"#, options: .regularExpression) {
+            return String(raw[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if folded.contains("zjazd") || folded.contains("zjedz") {
+            return "najbliższym zjeździe"
+        }
+        return "najbliższym skrzyżowaniu"
     }
 
     /// Aktualizuj odległość do następnego manewru na podstawie GPS.
@@ -475,6 +568,48 @@ final class NavigationMapState: ObservableObject {
         }
     }
 
+    /// Po „chcę jechać prosto” trasa może kończyć się za skrzyżowaniem, a pin celu zostaje na finale —
+    /// gdy zbliżysz się do końca odcinka bias, dociągnij trasę do właściwego celu.
+    func considerManeuverBiasContinue(userCoordinate: CLLocationCoordinate2D?) {
+        guard isNavigating,
+              !isAnimatingRouteReveal,
+              let userCoordinate,
+              let route,
+              let dest = destinationCoordinate,
+              let title = destinationTitle else { return }
+        guard let routeEnd = RouteGeometry.coordinate(along: route.polyline, progress: 1) else { return }
+        let endToDest = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
+            .distance(from: CLLocation(latitude: dest.latitude, longitude: dest.longitude))
+        // Zwykła trasa kończy się przy pinie — nie ruszaj.
+        guard endToDest > 180 else { return }
+        let userToEnd = CLLocation(latitude: userCoordinate.latitude, longitude: userCoordinate.longitude)
+            .distance(from: CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude))
+        guard userToEnd < 75 else { return }
+        if let last = lastRerouteAt, Date().timeIntervalSince(last) < 8 { return }
+        guard rerouteTask == nil else { return }
+
+        lastRerouteAt = Date()
+        let lat = userCoordinate.latitude
+        let lon = userCoordinate.longitude
+        let destLat = dest.latitude
+        let destLon = dest.longitude
+        let destTitle = title
+        rerouteTask = Task { @MainActor in
+            defer { rerouteTask = nil }
+            do {
+                _ = try await MapKitNavigationService.shared.planBestRoute(
+                    toLatitude: destLat,
+                    toLongitude: destLon,
+                    destinationName: destTitle,
+                    fromLatitude: lat,
+                    fromLongitude: lon,
+                    animateReveal: false,
+                    resetTripStats: false
+                )
+            } catch { /* kolejny tick GPS */ }
+        }
+    }
+
     /// Auto-przelicz trasę, gdy kierowca zjedzie z polilinii (bez animacji rysowania).
     func considerAutoReroute(userCoordinate: CLLocationCoordinate2D?) {
         guard isNavigating,
@@ -523,6 +658,11 @@ final class NavigationMapState: ObservableObject {
                 // Ciche niepowodzenie — spróbujemy przy kolejnym zjeździe.
             }
         }
+    }
+
+    /// Scoring alternatyw przy głosowej zmianie manewru.
+    static func buildManeuversForPreference(from route: MKRoute) -> [TurnManeuver] {
+        buildManeuvers(from: route)
     }
 
     private static func buildManeuvers(from route: MKRoute?) -> [TurnManeuver] {
@@ -699,6 +839,10 @@ final class NavigationMapState: ObservableObject {
 
     /// Znormalizowana różnica headingów w (−180, 180]; dodatnia = w prawo.
     private static func signedHeadingDelta(from: CLLocationDirection, to: CLLocationDirection) -> Double {
+        signedHeadingDeltaPublic(from: from, to: to)
+    }
+
+    static func signedHeadingDeltaPublic(from: CLLocationDirection, to: CLLocationDirection) -> Double {
         var d = to - from
         while d > 180 { d -= 360 }
         while d <= -180 { d += 360 }
@@ -723,6 +867,13 @@ final class MapKitNavigationService {
 
     weak var mapState: NavigationMapState?
     weak var location: LocationSpeedService?
+
+    /// Aktualny tryb z ustawień (samochód domyślnie).
+    static var activeTravelMode: TravelMode {
+        TravelMode(rawValue: UserDefaults.standard.string(forKey: "travelMode") ?? "") ?? .car
+    }
+
+    private var activeTravelMode: TravelMode { Self.activeTravelMode }
 
     struct PlaceResult: Sendable {
         let name: String
@@ -909,7 +1060,7 @@ final class MapKitNavigationService {
     }
 
     private static func mapItemToPlace(_ item: MKMapItem, fallbackName: String) -> PlaceResult? {
-        let coord = item.location.coordinate
+        let coord = MapKitCompatibility.coordinate(of: item)
         if abs(coord.latitude) < 0.0001, abs(coord.longitude) < 0.0001 { return nil }
         let address = [
             item.placemark.thoroughfare,
@@ -962,32 +1113,26 @@ final class MapKitNavigationService {
         }
 
         let destCoord = CLLocationCoordinate2D(latitude: toLatitude, longitude: toLongitude)
-        let destination = MKMapItem(
-            location: CLLocation(latitude: toLatitude, longitude: toLongitude),
-            address: nil
-        )
-        destination.name = destinationName
+        let destination = MapKitCompatibility.mapItem(coordinate: destCoord, name: destinationName)
 
         let source: MKMapItem
         if let fromLatitude, let fromLongitude {
-            source = MKMapItem(
-                location: CLLocation(latitude: fromLatitude, longitude: fromLongitude),
-                address: nil
+            source = MapKitCompatibility.mapItem(
+                coordinate: CLLocationCoordinate2D(latitude: fromLatitude, longitude: fromLongitude),
+                name: "Start"
             )
-            source.name = "Start"
         } else if let from = location?.coordinate {
-            source = MKMapItem(
-                location: CLLocation(latitude: from.latitude, longitude: from.longitude),
-                address: nil
-            )
+            source = MapKitCompatibility.mapItem(coordinate: from, name: nil)
         } else {
             source = .forCurrentLocation()
         }
 
+        let travelMode = Self.activeTravelMode
         let request = MKDirections.Request()
         request.source = source
         request.destination = destination
-        request.transportType = .automobile
+        // Rower: ścieżki / trasy piesze (najbliższy odpowiednik roweru w MapKit).
+        request.transportType = travelMode.mapKitTransportType
 
         let prefs = DriveMateMemoryStore.shared.activeAvoidances(near: destCoord)
         let useAlternates = !prefs.isEmpty
@@ -1014,7 +1159,7 @@ final class MapKitNavigationService {
             let km = route.distance / 1000
             let notices = route.advisoryNotices
             return RouteResult(
-                name: route.name.isEmpty ? "Trasa samochodowa" : route.name,
+                name: route.name.isEmpty ? travelMode.routeLabel : route.name,
                 distanceMeters: route.distance,
                 expectedSeconds: route.expectedTravelTime,
                 hasToll: false,
@@ -1046,7 +1191,7 @@ final class MapKitNavigationService {
             abs($0.distanceMeters - best.distance) < 1
                 && abs($0.expectedSeconds - best.expectedTravelTime) < 1
         }) ?? RouteResult(
-            name: best.name.isEmpty ? "Trasa samochodowa" : best.name,
+            name: best.name.isEmpty ? travelMode.routeLabel : best.name,
             distanceMeters: best.distance,
             expectedSeconds: best.expectedTravelTime,
             hasToll: false,
@@ -1060,6 +1205,713 @@ final class MapKitNavigationService {
         )
 
         return (bestResult, [])
+    }
+
+    /// Głos: „chcę jechać prosto / w lewo na następnym skrzyżowaniu” — przelicz trasę pod ten manewr.
+    /// Mówi „zmieniłem” TYLKO gdy mapa dostaje inną polilinię i da się potem dojechać do celu.
+    func reroutePreferringManeuver(_ direction: TurnDirection) async -> String {
+        guard let mapState, mapState.isNavigating else {
+            return "Nie mam aktywnej trasy — najpierw wybierz cel."
+        }
+        guard let dest = mapState.destinationCoordinate,
+              let title = mapState.destinationTitle,
+              let user = location?.coordinate else {
+            return "Potrzebuję lokalizacji i aktywnego celu, żeby zmienić trasę."
+        }
+
+        let currentRoute = mapState.route
+        let snap = mapState.nextManeuverSnapshot(userCoordinate: user)
+        if let planned = snap?.maneuver.direction, planned == direction {
+            return "Już mam w planie jazdę \(direction.spoken) na następnym skrzyżowaniu — trzymaj się trasy."
+        }
+
+        let intersection: CLLocationCoordinate2D
+        let approach: CLLocationDirection
+        if let snap {
+            intersection = snap.maneuver.coordinate
+            // Heading dojazdu z trasy (nie „z GPS do pinu”) — pewniejszy kąt manewru.
+            if let route = currentRoute,
+               let along = Self.pointAlongRoute(route, near: intersection, metersAhead: -40)
+                ?? Self.pointAlongRoute(route, near: user, metersAhead: 40) {
+                approach = along.bearing
+            } else {
+                approach = Self.bearing(from: user, to: intersection)
+            }
+        } else if let route = currentRoute,
+                  let ahead = Self.pointAlongRoute(route, near: user, metersAhead: 120) {
+            intersection = ahead.coordinate
+            approach = ahead.bearing
+        } else {
+            intersection = Self.offsetCoordinate(user, bearing: 0, meters: 100)
+            approach = 0
+        }
+
+        let exitBearing = Self.exitBearing(approach: approach, direction: direction)
+        let vias = Self.viaCandidates(from: intersection, exitBearing: exitBearing)
+        let transport = Self.activeTravelMode.mapKitTransportType
+
+        do {
+            // 1) Pełne alternatywy do celu — muszą być INNE niż obecna i wychodzić wybranym kierunkiem.
+            if let alt = try await Self.findDistinctAlternate(
+                from: user,
+                to: dest,
+                current: currentRoute,
+                intersection: intersection,
+                approach: approach,
+                want: direction,
+                vias: vias,
+                transportType: transport
+            ) {
+                mapState.presentDestination(
+                    coordinate: dest,
+                    title: title,
+                    route: alt,
+                    alternates: [],
+                    animateReveal: true,
+                    resetTripStats: false
+                )
+                Self.rememberManeuverPreference(
+                    via: vias.first ?? intersection,
+                    destination: dest,
+                    title: title,
+                    avoidedHint: snap?.maneuver.instruction
+                )
+                let minutes = Int((alt.expectedTravelTime / 60).rounded())
+                return "Zmieniłem trasę — na następnym skrzyżowaniu jedź \(direction.spoken). Do \(title) ok. \(minutes) min."
+            }
+
+            // 2) Szukaj korytarza (via) z dowodem dojazdu, potem TYLKO pełna trasa user→cel.
+            //    Nigdy nie podstawiamy odcinka do via jako celu — pin i koniec linii = oryginalny dest.
+            if let full = try await Self.findFullRouteAfterPreferredExit(
+                from: user,
+                to: dest,
+                current: currentRoute,
+                intersection: intersection,
+                approach: approach,
+                want: direction,
+                vias: vias,
+                transportType: transport
+            ) {
+                mapState.presentDestination(
+                    coordinate: dest,
+                    title: title,
+                    route: full,
+                    alternates: [],
+                    animateReveal: true,
+                    resetTripStats: false
+                )
+                if let tip = RouteGeometry.coordinate(along: full.polyline, progress: 0.2) {
+                    Self.rememberManeuverPreference(
+                        via: tip,
+                        destination: dest,
+                        title: title,
+                        avoidedHint: snap?.maneuver.instruction
+                    )
+                }
+                let minutes = Int((full.expectedTravelTime / 60).rounded())
+                return "Zmieniłem trasę — na następnym skrzyżowaniu jedź \(direction.spoken). Do \(title) ok. \(minutes) min."
+            }
+
+            // 3) Soft: najlepsza alternatywa z wyjściem najbliższym żądanemu (luźniejszy próg kąta).
+            if let soft = try await Self.findSoftAlternate(
+                from: user,
+                to: dest,
+                current: currentRoute,
+                intersection: intersection,
+                approach: approach,
+                want: direction,
+                transportType: transport
+            ) {
+                mapState.presentDestination(
+                    coordinate: dest,
+                    title: title,
+                    route: soft,
+                    alternates: [],
+                    animateReveal: true,
+                    resetTripStats: false
+                )
+                Self.rememberManeuverPreference(
+                    via: vias.first ?? intersection,
+                    destination: dest,
+                    title: title,
+                    avoidedHint: snap?.maneuver.instruction
+                )
+                let minutes = Int((soft.expectedTravelTime / 60).rounded())
+                return "Zmieniłem trasę — na następnym skrzyżowaniu jedź \(direction.spoken). Do \(title) ok. \(minutes) min."
+            }
+
+            // 4) Preferencja + planBestRoute — jeśli mapa się zmieniła i cel jest ten sam, AKCEPTUJ.
+            //    Wcześniej zbyt ostry filtr kąta odrzucał trasy, które po „odnowieniu” i tak działały.
+            Self.rememberManeuverPreference(
+                via: vias.first ?? intersection,
+                destination: dest,
+                title: title,
+                avoidedHint: snap?.maneuver.instruction
+            )
+            let before = currentRoute
+            _ = try await planBestRoute(
+                toLatitude: dest.latitude,
+                toLongitude: dest.longitude,
+                destinationName: title,
+                fromLatitude: user.latitude,
+                fromLongitude: user.longitude,
+                animateReveal: true,
+                resetTripStats: false
+            )
+            if let after = mapState.route,
+               Self.routeEndsNear(after, destination: dest),
+               !Self.routesVisuallySimilar(after, before) {
+                let minutes = Int((after.expectedTravelTime / 60).rounded())
+                return "Zmieniłem trasę — na następnym skrzyżowaniu jedź \(direction.spoken). Do \(title) ok. \(minutes) min."
+            }
+            // Ta sama trasa co przedtem → naprawdę brak alternatywy.
+            if let before, Self.routesVisuallySimilar(mapState.route, before) {
+                mapState.presentDestination(
+                    coordinate: dest,
+                    title: title,
+                    route: before,
+                    alternates: [],
+                    animateReveal: false,
+                    resetTripStats: false
+                )
+            }
+
+            return "Sprawdziłem możliwe trasy — po jeździe \(direction.spoken) na tym skrzyżowaniu nie da się sensownie dojechać do \(title). Zostajemy przy obecnej trasie."
+        } catch {
+            return "Nie udało się sprawdzić innej trasy: \(error.localizedDescription)"
+        }
+    }
+
+    private static func exitBearing(approach: CLLocationDirection, direction: TurnDirection) -> CLLocationDirection {
+        switch direction {
+        case .straight: return approach
+        case .left: return (approach - 90 + 360).truncatingRemainder(dividingBy: 360)
+        case .right: return (approach + 90).truncatingRemainder(dividingBy: 360)
+        }
+    }
+
+    private static func viaCandidates(
+        from intersection: CLLocationCoordinate2D,
+        exitBearing: CLLocationDirection
+    ) -> [CLLocationCoordinate2D] {
+        var result: [CLLocationCoordinate2D] = []
+        // Najpierw „na wprost” wyjścia, potem lekkie odchyłki (droga rzadko leży dokładnie pod kątem).
+        for meters in [120.0, 170.0, 230.0] {
+            for delta in [0.0, -22.0, 22.0, -40.0, 40.0] {
+                let b = (exitBearing + delta + 360).truncatingRemainder(dividingBy: 360)
+                result.append(offsetCoordinate(intersection, bearing: b, meters: meters))
+            }
+        }
+        return result
+    }
+
+    private static func findDistinctAlternate(
+        from user: CLLocationCoordinate2D,
+        to dest: CLLocationCoordinate2D,
+        current: MKRoute?,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection,
+        vias: [CLLocationCoordinate2D],
+        transportType: MKDirectionsTransportType
+    ) async throws -> MKRoute? {
+        let request = MKDirections.Request()
+        request.source = MapKitCompatibility.mapItem(coordinate: user, name: nil)
+        request.destination = MapKitCompatibility.mapItem(coordinate: dest, name: "Cel")
+        request.transportType = transportType
+        request.requestsAlternateRoutes = true
+        let response = try await MKDirections(request: request).calculate()
+
+        var ranked: [(MKRoute, Double)] = []
+        for route in response.routes {
+            if routesVisuallySimilar(route, current) { continue }
+            // Koniec = prawdziwy cel (nie via / nie skrzyżowanie).
+            guard let routeEnd = RouteGeometry.coordinate(along: route.polyline, progress: 1) else { continue }
+            let endToDest = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
+                .distance(from: CLLocation(latitude: dest.latitude, longitude: dest.longitude))
+            guard endToDest < 120 else { continue }
+
+            guard routeExitsInDirection(
+                route,
+                intersection: intersection,
+                approach: approach,
+                want: want
+            ) else { continue }
+
+            let viaBonus = vias.map { polylineMinDistance(route.polyline, to: $0) }.min() ?? 500
+            let score = route.expectedTravelTime / 60 + viaBonus / 80
+            ranked.append((route, score))
+        }
+        return ranked.min(by: { $0.1 < $1.1 })?.0
+    }
+
+    /// Znajdź korytarz z preferowanym wyjazdem, potwierdź dojazd do celu, zwróć pełną trasę user→cel.
+    private static func findFullRouteAfterPreferredExit(
+        from user: CLLocationCoordinate2D,
+        to dest: CLLocationCoordinate2D,
+        current: MKRoute?,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection,
+        vias: [CLLocationCoordinate2D],
+        transportType: MKDirectionsTransportType
+    ) async throws -> MKRoute? {
+        // Cache alternatyw do prawdziwego celu — zawsze kończą się na `dest`.
+        let destReq = MKDirections.Request()
+        destReq.source = MapKitCompatibility.mapItem(coordinate: user, name: nil)
+        destReq.destination = MapKitCompatibility.mapItem(coordinate: dest, name: "Cel")
+        destReq.transportType = transportType
+        destReq.requestsAlternateRoutes = true
+        let destAlternates = (try? await MKDirections(request: destReq).calculate().routes) ?? []
+
+        var corridorSamples: [[CLLocationCoordinate2D]] = []
+        var checked = 0
+
+        let ordered = vias.enumerated().sorted { a, b in
+            let aMain = a.offset % 5 == 0
+            let bMain = b.offset % 5 == 0
+            if aMain != bMain { return aMain }
+            return a.offset < b.offset
+        }.map(\.element)
+
+        for via in ordered {
+            if checked >= 8 { break }
+
+            let toViaReq = MKDirections.Request()
+            toViaReq.source = MapKitCompatibility.mapItem(coordinate: user, name: nil)
+            toViaReq.destination = MapKitCompatibility.mapItem(coordinate: via, name: "Via")
+            toViaReq.transportType = transportType
+            toViaReq.requestsAlternateRoutes = true
+
+            guard let toViaRoutes = try? await MKDirections(request: toViaReq).calculate().routes,
+                  !toViaRoutes.isEmpty else { continue }
+
+            for leg1 in toViaRoutes.prefix(2) {
+                if routesVisuallySimilar(leg1, current) { continue }
+                guard routeExitsInDirection(
+                    leg1,
+                    intersection: intersection,
+                    approach: approach,
+                    want: want
+                ) else { continue }
+
+                // Punkt na prawdziwej drodze (po skrzyżowaniu), nie surowy offset GPS.
+                guard let roadVia = coordinateOnRoute(leg1, afterPassing: intersection, metersPast: 70)
+                        ?? RouteGeometry.coordinate(along: leg1.polyline, progress: 0.65)
+                else { continue }
+
+                checked += 1
+                // Dowód: z korytarza da się dojechać do ORYGINALNEGO celu.
+                let toDestReq = MKDirections.Request()
+                toDestReq.source = MapKitCompatibility.mapItem(coordinate: roadVia, name: "Via")
+                toDestReq.destination = MapKitCompatibility.mapItem(coordinate: dest, name: "Cel")
+                toDestReq.transportType = transportType
+                toDestReq.requestsAlternateRoutes = false
+                guard (try? await MKDirections(request: toDestReq).calculate().routes.first) != nil
+                else { continue }
+
+                corridorSamples.append(samplePolyline(leg1.polyline, maxSamples: 14))
+
+                // Pełna trasa do celu pasująca do korytarza.
+                if let match = bestFullRoute(
+                    among: destAlternates,
+                    current: current,
+                    intersection: intersection,
+                    approach: approach,
+                    want: want,
+                    corridorSamples: corridorSamples,
+                    roadVia: roadVia,
+                    destination: dest
+                ) {
+                    return match
+                }
+            }
+        }
+
+        // Ostatnia szansa: spośród alternatyw do celu wybierz najlepszy korytarz (jeśli coś zebraliśmy).
+        if !corridorSamples.isEmpty, !destAlternates.isEmpty {
+            return bestFullRoute(
+                among: destAlternates,
+                current: current,
+                intersection: intersection,
+                approach: approach,
+                want: want,
+                corridorSamples: corridorSamples,
+                roadVia: corridorSamples[0].last ?? intersection,
+                destination: dest
+            )
+        }
+        return nil
+    }
+
+    private static func bestFullRoute(
+        among routes: [MKRoute],
+        current: MKRoute?,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection,
+        corridorSamples: [[CLLocationCoordinate2D]],
+        roadVia: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D? = nil
+    ) -> MKRoute? {
+        var ranked: [(MKRoute, Double)] = []
+        for route in routes {
+            if routesVisuallySimilar(route, current) { continue }
+            // Koniec polilinii = oryginalny cel (nigdy punkt via).
+            guard let routeEnd = RouteGeometry.coordinate(along: route.polyline, progress: 1) else { continue }
+            if let destination {
+                let toDest = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
+                    .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
+                guard toDest < 120 else { continue }
+            }
+            let endToVia = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
+                .distance(from: CLLocation(latitude: roadVia.latitude, longitude: roadVia.longitude))
+            // Odrzuć trasę, która „kończy się” przy via zamiast przy celu.
+            guard endToVia > 200 else { continue }
+
+            guard routeExitsInDirection(
+                route,
+                intersection: intersection,
+                approach: approach,
+                want: want
+            ) else { continue }
+
+            let viaNear = polylineMinDistance(route.polyline, to: roadVia)
+            // Luźniej — drogi rzadko leżą dokładnie pod offsetem via.
+            guard viaNear < 260 else { continue }
+
+            var overlap: Double = 0
+            if let samples = corridorSamples.max(by: { $0.count < $1.count }), samples.count >= 2 {
+                overlap = pathOverlapScore(route: route, samples: samples)
+            }
+            let score = viaNear / 50 - overlap * 30 + route.expectedTravelTime / 90
+            ranked.append((route, score))
+        }
+        return ranked.min(by: { $0.1 < $1.1 })?.0
+    }
+
+    /// Alternatywa z wyjściem „wystarczająco blisko” żądanego kierunku (nie idealnie).
+    private static func findSoftAlternate(
+        from user: CLLocationCoordinate2D,
+        to dest: CLLocationCoordinate2D,
+        current: MKRoute?,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection,
+        transportType: MKDirectionsTransportType
+    ) async throws -> MKRoute? {
+        let request = MKDirections.Request()
+        request.source = MapKitCompatibility.mapItem(coordinate: user, name: nil)
+        request.destination = MapKitCompatibility.mapItem(coordinate: dest, name: "Cel")
+        request.transportType = transportType
+        request.requestsAlternateRoutes = true
+        let routes = try await MKDirections(request: request).calculate().routes
+
+        var ranked: [(MKRoute, Double)] = []
+        for route in routes {
+            if routesVisuallySimilar(route, current) { continue }
+            guard routeEndsNear(route, destination: dest) else { continue }
+            let err = exitAngleError(route, intersection: intersection, approach: approach, want: want)
+            guard err < 85 else { continue }
+            // Odrzuć tylko wyraźnie przeciwny kierunek.
+            if let exit = exitBearingNearIntersection(route.polyline, intersection: intersection) {
+                let delta = NavigationMapState.signedHeadingDeltaPublic(from: approach, to: exit)
+                if want == .left, delta > 35 { continue }
+                if want == .right, delta < -35 { continue }
+                if want == .straight, abs(delta) > 70 { continue }
+            }
+            ranked.append((route, err + route.expectedTravelTime / 120))
+        }
+        return ranked.min(by: { $0.1 < $1.1 })?.0
+    }
+
+    private static func routeEndsNear(_ route: MKRoute, destination: CLLocationCoordinate2D) -> Bool {
+        guard let end = RouteGeometry.coordinate(along: route.polyline, progress: 1) else { return false }
+        return CLLocation(latitude: end.latitude, longitude: end.longitude)
+            .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude)) < 140
+    }
+
+    /// 0 = idealny wyjazd; duże wartości = zły kierunek.
+    private static func exitAngleError(
+        _ route: MKRoute,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection
+    ) -> Double {
+        let wantBearing = exitBearing(approach: approach, direction: want)
+        guard let exit = exitBearingNearIntersection(route.polyline, intersection: intersection) else {
+            let first = NavigationMapState.buildManeuversForPreference(from: route).first?.direction
+            if first == want { return 8 }
+            if want == .straight, first == nil { return 20 }
+            return 90
+        }
+        let delta = abs(NavigationMapState.signedHeadingDeltaPublic(from: wantBearing, to: exit))
+        return delta
+    }
+
+    private static func coordinateOnRoute(
+        _ route: MKRoute,
+        afterPassing junction: CLLocationCoordinate2D,
+        metersPast: CLLocationDistance
+    ) -> CLLocationCoordinate2D? {
+        let poly = route.polyline
+        let count = poly.pointCount
+        guard count >= 2 else { return nil }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        poly.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        let target = CLLocation(latitude: junction.latitude, longitude: junction.longitude)
+        var bestIdx = 0
+        var bestD = CLLocationDistance.greatestFiniteMagnitude
+        for i in 0..<count {
+            let d = target.distance(from: CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude))
+            if d < bestD {
+                bestD = d
+                bestIdx = i
+            }
+        }
+        guard bestD < 180 else { return nil }
+        var remaining = metersPast
+        var idx = bestIdx
+        while idx < count - 1 {
+            let a = coords[idx]
+            let b = coords[idx + 1]
+            let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+            if seg >= remaining {
+                let t = remaining / max(seg, 1)
+                return CLLocationCoordinate2D(
+                    latitude: a.latitude + (b.latitude - a.latitude) * t,
+                    longitude: a.longitude + (b.longitude - a.longitude) * t
+                )
+            }
+            remaining -= seg
+            idx += 1
+        }
+        return coords.last
+    }
+
+    private static func samplePolyline(_ polyline: MKPolyline, maxSamples: Int) -> [CLLocationCoordinate2D] {
+        let count = polyline.pointCount
+        guard count > 0 else { return [] }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        if count <= maxSamples { return coords }
+        var result: [CLLocationCoordinate2D] = []
+        for i in 0..<maxSamples {
+            let idx = Int(Double(i) / Double(maxSamples - 1) * Double(count - 1))
+            result.append(coords[idx])
+        }
+        return result
+    }
+
+    /// Czy polilinia za skrzyżowaniem wychodzi w żądanym kierunku względem dojazdu.
+    private static func routeExitsInDirection(
+        _ route: MKRoute,
+        intersection: CLLocationCoordinate2D,
+        approach: CLLocationDirection,
+        want: TurnDirection
+    ) -> Bool {
+        guard let exit = exitBearingNearIntersection(route.polyline, intersection: intersection) else {
+            // Brak geometrii przy skrzyżowaniu — fallback na pierwszy manewr z instrukcji.
+            let first = NavigationMapState.buildManeuversForPreference(from: route).first?.direction
+            if want == .straight { return first == nil || first == .straight }
+            return first == want
+        }
+        let delta = NavigationMapState.signedHeadingDeltaPublic(from: approach, to: exit)
+        // Luźniejsze progi — miejskie skrzyżowania rzadko mają idealne 90°.
+        switch want {
+        case .straight:
+            return abs(delta) < 38
+        case .left:
+            return delta < -16 && delta > -160
+        case .right:
+            return delta > 16 && delta < 160
+        }
+    }
+
+    private static func exitBearingNearIntersection(
+        _ polyline: MKPolyline,
+        intersection: CLLocationCoordinate2D
+    ) -> CLLocationDirection? {
+        let count = polyline.pointCount
+        guard count >= 2 else { return nil }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        let target = CLLocation(latitude: intersection.latitude, longitude: intersection.longitude)
+        var bestIdx = 0
+        var bestD = CLLocationDistance.greatestFiniteMagnitude
+        for i in 0..<count {
+            let d = target.distance(from: CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude))
+            if d < bestD {
+                bestD = d
+                bestIdx = i
+            }
+        }
+        guard bestD < 220 else { return nil }
+        // Weź punkt ~40–80 m ZA najbliższym punktem skrzyżowania.
+        var remaining: CLLocationDistance = 55
+        var idx = bestIdx
+        while idx < count - 1 {
+            let a = coords[idx]
+            let b = coords[idx + 1]
+            let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+            if seg >= remaining {
+                return bearing(from: a, to: b)
+            }
+            remaining -= seg
+            idx += 1
+        }
+        if bestIdx + 1 < count {
+            return bearing(from: coords[bestIdx], to: coords[min(bestIdx + 1, count - 1)])
+        }
+        return nil
+    }
+
+    private static func routesVisuallySimilar(_ a: MKRoute?, _ b: MKRoute?) -> Bool {
+        guard let a, let b else { return false }
+        if abs(a.distance - b.distance) < 40,
+           abs(a.expectedTravelTime - b.expectedTravelTime) < 20 {
+            // Porównaj środek i koniec polilinii.
+            let midA = RouteGeometry.coordinate(along: a.polyline, progress: 0.35)
+            let midB = RouteGeometry.coordinate(along: b.polyline, progress: 0.35)
+            let endA = RouteGeometry.coordinate(along: a.polyline, progress: 0.85)
+            let endB = RouteGeometry.coordinate(along: b.polyline, progress: 0.85)
+            if let midA, let midB, let endA, let endB {
+                let d1 = CLLocation(latitude: midA.latitude, longitude: midA.longitude)
+                    .distance(from: CLLocation(latitude: midB.latitude, longitude: midB.longitude))
+                let d2 = CLLocation(latitude: endA.latitude, longitude: endA.longitude)
+                    .distance(from: CLLocation(latitude: endB.latitude, longitude: endB.longitude))
+                if d1 < 70, d2 < 90 { return true }
+            }
+        }
+        return false
+    }
+
+    private static func polylineMinDistance(_ polyline: MKPolyline, to point: CLLocationCoordinate2D) -> CLLocationDistance {
+        let count = polyline.pointCount
+        guard count > 0 else { return .greatestFiniteMagnitude }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        let target = CLLocation(latitude: point.latitude, longitude: point.longitude)
+        var minD = CLLocationDistance.greatestFiniteMagnitude
+        // Co kilka punktów — wystarczy do scoringu.
+        let step = max(1, count / 40)
+        var i = 0
+        while i < count {
+            let d = target.distance(from: CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude))
+            if d < minD { minD = d }
+            i += step
+        }
+        return minD
+    }
+
+    /// `metersAhead` ujemne = cofnij się wzdłuż trasy (np. dojazd przed skrzyżowaniem).
+    private static func pointAlongRoute(
+        _ route: MKRoute,
+        near user: CLLocationCoordinate2D,
+        metersAhead: CLLocationDistance
+    ) -> (coordinate: CLLocationCoordinate2D, bearing: CLLocationDirection)? {
+        let poly = route.polyline
+        let count = poly.pointCount
+        guard count >= 2 else { return nil }
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        poly.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        let userLoc = CLLocation(latitude: user.latitude, longitude: user.longitude)
+        var bestIdx = 0
+        var bestD = CLLocationDistance.greatestFiniteMagnitude
+        for i in 0..<count {
+            let d = userLoc.distance(from: CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude))
+            if d < bestD {
+                bestD = d
+                bestIdx = i
+            }
+        }
+
+        if metersAhead < 0 {
+            var remaining = -metersAhead
+            var idx = bestIdx
+            while idx > 0 {
+                let a = coords[idx - 1]
+                let b = coords[idx]
+                let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                    .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+                if seg >= remaining {
+                    let t = remaining / max(seg, 1)
+                    let coord = CLLocationCoordinate2D(
+                        latitude: b.latitude + (a.latitude - b.latitude) * t,
+                        longitude: b.longitude + (a.longitude - b.longitude) * t
+                    )
+                    return (coord, bearing(from: a, to: b))
+                }
+                remaining -= seg
+                idx -= 1
+            }
+            return (coords[0], bearing(from: coords[0], to: coords[1]))
+        }
+
+        var remaining = metersAhead
+        var idx = bestIdx
+        while idx < count - 1 {
+            let a = coords[idx]
+            let b = coords[idx + 1]
+            let seg = CLLocation(latitude: a.latitude, longitude: a.longitude)
+                .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+            if seg >= remaining {
+                let t = remaining / max(seg, 1)
+                let coord = CLLocationCoordinate2D(
+                    latitude: a.latitude + (b.latitude - a.latitude) * t,
+                    longitude: a.longitude + (b.longitude - a.longitude) * t
+                )
+                return (coord, bearing(from: a, to: b))
+            }
+            remaining -= seg
+            idx += 1
+        }
+        let last = coords[count - 1]
+        let prev = coords[count - 2]
+        return (last, bearing(from: prev, to: last))
+    }
+
+    private static func offsetCoordinate(
+        _ from: CLLocationCoordinate2D,
+        bearing: CLLocationDirection,
+        meters: CLLocationDistance
+    ) -> CLLocationCoordinate2D {
+        let R = 6_378_137.0
+        let brng = bearing * .pi / 180
+        let lat1 = from.latitude * .pi / 180
+        let lon1 = from.longitude * .pi / 180
+        let lat2 = asin(sin(lat1) * cos(meters / R) + cos(lat1) * sin(meters / R) * cos(brng))
+        let lon2 = lon1 + atan2(
+            sin(brng) * sin(meters / R) * cos(lat1),
+            cos(meters / R) - sin(lat1) * sin(lat2)
+        )
+        return CLLocationCoordinate2D(latitude: lat2 * 180 / .pi, longitude: lon2 * 180 / .pi)
+    }
+
+    private static func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> CLLocationDirection {
+        let lat1 = from.latitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let dLon = (to.longitude - from.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        let deg = atan2(y, x) * 180 / .pi
+        return (deg + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    private static func rememberManeuverPreference(
+        via: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        title: String,
+        avoidedHint: String?
+    ) {
+        DriveMateMemoryStore.shared.recordSpokenManeuverPreference(
+            destinationTitle: title,
+            destination: destination,
+            via: via,
+            avoidedStreetHint: avoidedHint
+        )
     }
 
     /// Wybierz trasę omijającą ulice, których user unika (≥3×).
@@ -1118,7 +1970,7 @@ final class MapKitNavigationService {
         let request = MKDirections.Request()
         request.source = source
         request.destination = destination
-        request.transportType = .automobile
+        request.transportType = Self.activeTravelMode.mapKitTransportType
         request.requestsAlternateRoutes = true
         do {
             let response = try await MKDirections(request: request).calculate()
@@ -1131,21 +1983,157 @@ final class MapKitNavigationService {
         }
     }
 
+    /// Analiza korków na aktywnej trasie: ETA MapKit + godzina + próbki odcinków.
+    func analyzeActiveRouteTrafficRisk(focusHint: String? = nil) async -> String {
+        guard let mapState, mapState.isNavigating,
+              let route = mapState.route,
+              let dest = mapState.destinationCoordinate,
+              let title = mapState.destinationTitle,
+              let user = location?.coordinate else {
+            if let here = location?.coordinate {
+                return (try? await trafficSnapshot(near: here))
+                    ?? "Nie mam aktywnej trasy — włącz nawigację, a ocenię korki po drodze."
+            }
+            return "Nie mam lokalizacji ani trasy do oceny korków."
+        }
+
+        let cal = Calendar.current
+        let now = Date()
+        let hour = cal.component(.hour, from: now)
+        let weekday = cal.component(.weekday, from: now) // 1 = niedziela
+        let isWeekday = weekday >= 2 && weekday <= 6
+        let morningRush = isWeekday && hour >= 7 && hour <= 9
+        let eveningRush = isWeekday && hour >= 15 && hour <= 18
+        let isRush = morningRush || eveningRush
+        let isNight = hour >= 22 || hour < 6
+        let isWeekend = weekday == 1 || weekday == 7
+
+        let etaSec = route.expectedTravelTime
+        let distanceM = route.distance
+        // Freeflow miejski ~42 km/h; poza miastem dłuższe trasy ~55 km/h.
+        let freeflowMps = distanceM > 12_000 ? 15.3 : 11.7
+        let freeflowSec = distanceM / freeflowMps
+        let delayRatio = etaSec / max(freeflowSec, 60)
+        let delayMin = max(0, Int(((etaSec - freeflowSec) / 60).rounded()))
+        let etaMin = Int((etaSec / 60).rounded())
+        let notices = route.advisoryNotices
+        let avgKmh = (distanceM / 1000) / max(etaSec / 3600, 0.01)
+
+        // Próbki 2–3 odcinków wzdłuż trasy (środek / ¾) — lokalne spowolnienia.
+        var segmentFlags: [String] = []
+        let sampleProgress: [CGFloat] = distanceM > 4_000 ? [0.35, 0.65, 0.85] : [0.5, 0.8]
+        for (idx, p) in sampleProgress.enumerated() {
+            guard let point = RouteGeometry.coordinate(along: route.polyline, progress: p) else { continue }
+            let prevProgress = idx == 0 ? 0.08 : sampleProgress[idx - 1]
+            guard let from = RouteGeometry.coordinate(along: route.polyline, progress: prevProgress) else { continue }
+            if let seg = try? await Self.quickLegStats(from: from, to: point, transport: Self.activeTravelMode.mapKitTransportType) {
+                let segFree = seg.distance / freeflowMps
+                let segRatio = seg.eta / max(segFree, 30)
+                if segRatio >= 1.55 || seg.speedKmh < 16 {
+                    segmentFlags.append("w okolicy \(Self.roughProgressLabel(p))")
+                } else if segRatio >= 1.28 || seg.speedKmh < 22 {
+                    segmentFlags.append("lekko wolniej \(Self.roughProgressLabel(p))")
+                }
+            }
+        }
+
+        enum Risk { case nearZero, low, moderate, high }
+        var risk: Risk
+        if !notices.isEmpty || delayRatio >= 1.55 || avgKmh < 16 {
+            risk = .high
+        } else if delayRatio >= 1.28 || avgKmh < 22 || (isRush && delayRatio >= 1.12) {
+            risk = .moderate
+        } else if isRush || (!segmentFlags.isEmpty && delayRatio >= 1.1) {
+            risk = .low
+        } else if isNight || (isWeekend && hour >= 10 && hour <= 14) {
+            risk = .nearZero
+        } else {
+            risk = delayRatio < 1.08 ? .nearZero : .low
+        }
+
+        // Godzina podbija / obniża werdykt (gdy ETA niepokazuje dużego opóźnienia).
+        if risk == .nearZero, isRush { risk = .low }
+        if risk == .low, isNight, notices.isEmpty, delayRatio < 1.15 { risk = .nearZero }
+
+        let timeLabel: String = {
+            if morningRush { return "to godzina porannego szczytu" }
+            if eveningRush { return "to godzina popołudniowego szczytu" }
+            if isNight { return "jest noc — ruch zwykle mały" }
+            if isWeekend { return "jest weekend" }
+            return String(format: "jest godzina %d", hour)
+        }()
+
+        var parts: [String] = []
+        switch risk {
+        case .nearZero:
+            parts.append("Na trasie do \(title) szansa na korki jest prawie zerowa.")
+            parts.append("\(timeLabel.prefix(1).uppercased())\(timeLabel.dropFirst()), ETA ok. \(etaMin) min — jedzie się raczej płynnie.")
+        case .low:
+            parts.append("Na trasie do \(title) mała szansa na większe korki.")
+            parts.append("\(timeLabel.prefix(1).uppercased())\(timeLabel.dropFirst()); dojazd ok. \(etaMin) min.")
+            if delayMin >= 2 {
+                parts.append("Ewentualne spowolnienie rzędu \(delayMin) min.")
+            }
+        case .moderate:
+            parts.append("Na trasie do \(title) jest realna szansa na utrudnienia.")
+            parts.append("\(timeLabel.prefix(1).uppercased())\(timeLabel.dropFirst()); ETA ok. \(etaMin) min\(delayMin >= 3 ? ", ok. \(delayMin) min powyżej swobodnego ruchu" : "").")
+        case .high:
+            parts.append("Na trasie do \(title) spodziewaj się korków lub mocnego spowolnienia.")
+            parts.append("ETA ok. \(etaMin) min\(delayMin >= 3 ? " — około \(delayMin) min straty względem swobodnego przejazdu" : "").")
+        }
+
+        if let focus = focusHint?.trimmingCharacters(in: .whitespacesAndNewlines), focus.count >= 2 {
+            parts.append("Pytałeś o okolice „\(focus)” — patrzę na całą trasę, nie tylko ten fragment.")
+        }
+        let uniqueSeg = Array(Set(segmentFlags)).prefix(2)
+        if !uniqueSeg.isEmpty {
+            parts.append("Wolniej może być \(uniqueSeg.joined(separator: " i ")).")
+        }
+        if !notices.isEmpty {
+            parts.append("Uwagi MapKit: \(notices.prefix(2).joined(separator: "; ")).")
+        }
+
+        // Warstwa ruchu na mapie Apple (compliance) — bez zmiany celu nawigacji.
+        MapComplianceStore.shared.showTraffic(
+            near: dest,
+            title: "Ruch na trasie",
+            route: route
+        )
+        // Przywróć fokus na usera — showTraffic nie powinien „kraść” celu.
+        _ = user
+        return parts.joined(separator: " ")
+    }
+
+    private static func roughProgressLabel(_ p: CGFloat) -> String {
+        if p < 0.4 { return "na początku trasy" }
+        if p < 0.7 { return "w środkowej części" }
+        return "bliżej celu"
+    }
+
+    private static func quickLegStats(
+        from: CLLocationCoordinate2D,
+        to: CLLocationCoordinate2D,
+        transport: MKDirectionsTransportType
+    ) async throws -> (distance: CLLocationDistance, eta: TimeInterval, speedKmh: Double) {
+        let request = MKDirections.Request()
+        request.source = MapKitCompatibility.mapItem(coordinate: from, name: nil)
+        request.destination = MapKitCompatibility.mapItem(coordinate: to, name: nil)
+        request.transportType = transport
+        request.requestsAlternateRoutes = false
+        let route = try await MKDirections(request: request).calculate().routes.first
+        guard let route else { throw NavigationError.noRoute }
+        let kmh = (route.distance / 1000) / max(route.expectedTravelTime / 3600, 0.01)
+        return (route.distance, route.expectedTravelTime, kmh)
+    }
+
     /// Ocena ruchu: jedna trasa MKDirections prezentowana na mapie Apple + warstwa ruchu.
     func trafficSnapshot(
         near coordinate: CLLocationCoordinate2D,
         radiusMeters: CLLocationDistance = 2500
     ) async throws -> String {
         let sourceCoord = location?.coordinate ?? coordinate
-        let source = MKMapItem(
-            location: CLLocation(latitude: sourceCoord.latitude, longitude: sourceCoord.longitude),
-            address: nil
-        )
-        let dest = MKMapItem(
-            location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude),
-            address: nil
-        )
-        dest.name = "Punkt oceny ruchu"
+        let source = MapKitCompatibility.mapItem(coordinate: sourceCoord, name: nil)
+        let dest = MapKitCompatibility.mapItem(coordinate: coordinate, name: "Punkt oceny ruchu")
 
         let request = MKDirections.Request()
         request.source = source
@@ -1339,4 +2327,6 @@ extension Notification.Name {
     static let driveMateDidCancelRoute = Notification.Name("driveMateDidCancelRoute")
     /// Drive Mate / odtwarzacz zmienił stan — pokaż panel muzyki.
     static let driveMateDidControlMusic = Notification.Name("driveMateDidControlMusic")
+    /// Głosowe / UI wyśrodkowanie — mapa ma natychmiast snapnąć kamerę na użytkownika.
+    static let driveMateRecenterRequested = Notification.Name("driveMateRecenterRequested")
 }

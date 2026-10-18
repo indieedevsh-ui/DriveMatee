@@ -8,6 +8,8 @@ struct SpeedBadge: View {
     let speedKmh: Int
     var isSpeeding: Bool = false
     var pulseScale: CGFloat = 1
+    /// Tryb rowerowy — większy prędkościomierz.
+    var enlarged: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -28,28 +30,26 @@ struct SpeedBadge: View {
     }
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: enlarged ? 4 : 2) {
             Text("\(speedKmh)")
-                .font(.system(size: 28, weight: .black, design: .rounded))
+                .font(.system(size: enlarged ? 44 : 28, weight: .black, design: .rounded))
                 .foregroundStyle(valueColor)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
                 .monospacedDigit()
             Text("KM/H")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .font(.system(size: enlarged ? 14 : 10, weight: .bold, design: .rounded))
                 .foregroundStyle(unitColor)
                 .tracking(0.6)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minWidth: 108, minHeight: 64)
+        .padding(.horizontal, enlarged ? 22 : 16)
+        .padding(.vertical, enlarged ? 16 : 10)
+        .frame(minWidth: enlarged ? 148 : 108, minHeight: enlarged ? 96 : 64)
         .background {
             ZStack {
-                // 60% regular liquid glass — słabsze niż pełne clear na innych kafelkach
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(.clear)
-                    .liquidGlassRect(cornerRadius: 18, .regular)
-                    .opacity(0.60)
+                    .driveTileGlassRect(cornerRadius: 18)
 
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(
@@ -105,7 +105,7 @@ struct ClockBadge: View {
             .background {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.black.opacity(isLight ? 0.16 : 0.28))
-                    .liquidGlassRect(cornerRadius: 18, .clear)
+                    .driveTileGlassRect(cornerRadius: 18)
                     .overlay {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .stroke(
@@ -170,7 +170,7 @@ struct MusicControlsBar: View {
         .background {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(Color.black.opacity(isLight ? 0.14 : 0))
-                .liquidGlassRect(cornerRadius: 30, .clear.interactive())
+                .driveTileGlassRect(cornerRadius: 30, interactive: true)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
@@ -250,7 +250,7 @@ struct RecenterNavButton: View {
                 .background {
                     Circle()
                         .fill(Color.black.opacity(isLight ? 0.14 : 0))
-                        .liquidGlassCircle(.clear.interactive())
+                        .driveTileGlassCircle(interactive: true)
                 }
                 .overlay {
                     Circle().stroke(
@@ -304,6 +304,10 @@ struct DriveView: View {
     @ObservedObject var settings: AppSettings
     var isDark: Bool
     var leadingChrome: CGFloat = 168
+    /// Portrait: wysokość dolnego paska zakładek (0 w landscape).
+    var bottomChrome: CGFloat = 0
+    /// Portrait: odsunięcie od Dynamic Island / notch (0 w landscape).
+    var topChrome: CGFloat = 0
 
     @State private var isMusicBarVisible = false
     @State private var musicHideTask: Task<Void, Never>?
@@ -313,8 +317,10 @@ struct DriveView: View {
     @State private var speedPulseScale: CGFloat = 1
     @State private var lastSpeedWarningAt: Date?
     @State private var speedPulseTask: Task<Void, Never>?
-    /// Tryb AR: tylna kamera zamiast mapy 2D.
+    /// Tryb AR: tylna kamera zamiast mapy 2D (tylko samochód).
     @State private var isARMode = false
+    /// Tryb kompasu (rower) — strzałka na środku.
+    @State private var isCompassMode = false
     /// Przypomnienie skrętu na skrzyżowaniu (AR) — znika po 5 s.
     @State private var arIntersectionReminder: TurnDirection?
     @State private var arReminderShownFor: Set<UUID> = []
@@ -326,6 +332,12 @@ struct DriveView: View {
     @ObservedObject private var arrivalConfirm = ArrivalConfirmService.shared
     @ObservedObject private var infoCard = DriveInfoCardStore.shared
     @ObservedObject private var chromeVisibility = DriveChromeVisibilityStore.shared
+    @ObservedObject private var voiceUI = DriveVoiceUIBridge.shared
+    @ObservedObject private var savedPlacePrompt = SavedPlaceNamePromptStore.shared
+    @ObservedObject private var offlineMapPrompt = OfflineMapPromptStore.shared
+    @ObservedObject private var offlineMaps = OfflineMapDownloadService.shared
+
+    private var isBikeMode: Bool { settings.travelMode == .bike }
 
     /// Szacowany limit (MapKit nie podaje znaku) — teren zabudowany.
     private let assumedSpeedLimitKmh = 50
@@ -333,6 +345,22 @@ struct DriveView: View {
 
     private var isNavigating: Bool { mapState.isNavigating }
     private var showingTripEnd: Bool { tripSummary != nil }
+    /// Portrait: panel muzyki wyżej nad dolnym chrome; landscape: lekko odklejony od dołu.
+    private var musicBottomPad: CGFloat {
+        bottomChrome > 0 ? bottomChrome + 38 : 22
+    }
+    /// Przybliżona wysokość `MusicControlsBar` (minHeight + padding / przyciski).
+    private var musicBarHeight: CGFloat { 112 }
+    /// Odstęp między górą panelu muzyki a Legal / kompas / recenter.
+    private var musicBarClearance: CGFloat { 16 }
+    /// Dolny offset pływającego chrome (Legal, kompas, recenter, zakończ).
+    /// Gdy widać muzykę — dokładnie nad panelem, w obu orientacjach.
+    private var navBottomPad: CGFloat {
+        if isMusicBarVisible {
+            return musicBottomPad + musicBarHeight + musicBarClearance
+        }
+        return bottomChrome + 22
+    }
     /// Pełny Drive Mate (nawigacja / asystent) — bez cyan gradientu.
     private var showNavDriveMate: Bool {
         !showingTripEnd
@@ -360,6 +388,7 @@ struct DriveView: View {
                 DriveTripEndView(
                     summary: tripSummary,
                     leadingChrome: leadingChrome,
+                    bottomChrome: bottomChrome,
                     userCoordinate: location.coordinate,
                     onBackToMenu: {
                         mapCompliance.clear()
@@ -375,12 +404,21 @@ struct DriveView: View {
                 .zIndex(30)
             } else if isNavigating {
                 ZStack {
-                    if isARMode {
+                    if isBikeMode, isCompassMode {
+                        DriveCompassNavView(
+                            guidance: mapState.nextTurnGuidance,
+                            leadingChrome: leadingChrome,
+                            bottomChrome: bottomChrome,
+                            topChrome: topChrome
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    } else if !isBikeMode, isARMode {
                         DriveARNavView(
                             camera: camera,
                             guidance: mapState.nextTurnGuidance,
                             intersectionReminder: arIntersectionReminder,
-                            leadingChrome: leadingChrome
+                            leadingChrome: leadingChrome,
+                            bottomChrome: bottomChrome
                         )
                         .transition(.opacity)
                     } else {
@@ -388,8 +426,9 @@ struct DriveView: View {
                             location: location,
                             mapState: mapState,
                             isDark: isDark,
-                            musicBarVisible: isMusicBarVisible,
+                            floatingChromeBottomPad: navBottomPad,
                             leadingChrome: leadingChrome,
+                            bottomChrome: bottomChrome,
                             onUserInteraction: { revealMusicBar() }
                         )
                         .ignoresSafeArea()
@@ -397,6 +436,8 @@ struct DriveView: View {
                     }
                 }
                 .animation(.easeInOut(duration: 0.35), value: isARMode)
+                .animation(.spring(response: 0.48, dampingFraction: 0.84), value: isCompassMode)
+                .animation(.easeInOut(duration: 0.3), value: isBikeMode)
             } else {
                 DriveIdleSetupView(
                     location: location,
@@ -404,6 +445,8 @@ struct DriveView: View {
                     assistant: assistant,
                     settings: settings,
                     leadingChrome: leadingChrome,
+                    bottomChrome: bottomChrome,
+                    topChrome: topChrome,
                     onNavigationStarted: {
                         idleVoiceMode = false
                         mapCompliance.clear()
@@ -434,7 +477,7 @@ struct DriveView: View {
                             .frame(maxWidth: 320)
                             .padding(.leading, leadingChrome + 8)
                             .padding(.trailing, 28)
-                            .padding(.bottom, idleVoiceMode ? 18 : 22)
+                            .padding(.bottom, bottomChrome + (idleVoiceMode ? 18 : 22))
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -456,7 +499,7 @@ struct DriveView: View {
                     .onTapGesture {
                         assistant.toggleListening()
                     }
-                    .padding(.top, 6)
+                    .padding(.top, 6 + topChrome)
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -482,7 +525,7 @@ struct DriveView: View {
                             assistant.toggleListening()
                         }
                         .padding(.trailing, 36)
-                        .padding(.top, 14)
+                        .padding(.top, 14 + topChrome)
                     }
                     Spacer(minLength: 0)
                 }
@@ -615,6 +658,64 @@ struct DriveView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(39)
             }
+
+            // „Zapamiętaj moją szkołę” — wpisz nazwę + podpowiedzi
+            if savedPlacePrompt.isPresented {
+                Color.black.opacity(0.5)
+                    .ignoresSafeArea()
+                    .zIndex(44)
+                    .onTapGesture {
+                        // Nie zamykaj przypadkowym tapem w tło — tylko Anuluj.
+                    }
+                SavedPlaceNamePromptView(
+                    store: savedPlacePrompt,
+                    onSaved: { reply in
+                        assistant.promptAndListen(reply)
+                    },
+                    onCancel: {
+                        assistant.promptAndListen("Anulowano.")
+                    }
+                )
+                .padding(.leading, leadingChrome * 0.35)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                .zIndex(45)
+            }
+
+            // Mapy offline — wybór obszaru
+            if offlineMapPrompt.isPresented {
+                Color.black.opacity(0.5)
+                    .ignoresSafeArea()
+                    .zIndex(46)
+                OfflineMapDownloadPromptView(
+                    store: offlineMapPrompt,
+                    onConfirm: {
+                        offlineMapPrompt.confirm()
+                        assistant.promptAndListen("Pobieram mapy offline w tle. Postęp zobaczysz jako kółeczko albo w ustawieniach Drive Mate.")
+                    },
+                    onCancel: {
+                        offlineMapPrompt.dismiss()
+                        assistant.promptAndListen("Anulowano pobieranie map.")
+                    }
+                )
+                .padding(.leading, leadingChrome * 0.35)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                .zIndex(47)
+            }
+
+            // Postęp map offline podczas jazdy
+            if offlineMaps.showsDriveBadge {
+                VStack {
+                    HStack {
+                        Spacer()
+                        OfflineMapProgressBadge()
+                            .padding(.trailing, 16)
+                            .padding(.top, 56)
+                    }
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                .zIndex(28)
+            }
         }
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: isNavigating)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: isMusicBarVisible)
@@ -626,6 +727,9 @@ struct DriveView: View {
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: gasOffer.phase)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: arrivalConfirm.isPrompting)
         .animation(.spring(response: 0.4, dampingFraction: 0.86), value: infoCard.isActive)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: savedPlacePrompt.isPresented)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: offlineMapPrompt.isPresented)
+        .animation(.spring(response: 0.35, dampingFraction: 0.9), value: offlineMaps.progressPercent)
         .onChange(of: mapState.isNavigating) { _, navigating in
             if navigating {
                 idleVoiceMode = false
@@ -657,6 +761,15 @@ struct DriveView: View {
             if isARMode {
                 exitARMode(stopCameraIfIdle: true)
             }
+            if isCompassMode {
+                withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                    isCompassMode = false
+                }
+            }
+        }
+        .onChange(of: voiceUI.uiCommandToken) { _, _ in
+            guard let command = voiceUI.consumeUICommand() else { return }
+            handleVoiceUICommand(command)
         }
         .onChange(of: location.speedKmh) { _, speed in
             handleSpeedLimitMonitor(speedKmh: speed)
@@ -714,6 +827,24 @@ struct DriveView: View {
         .onReceive(NotificationCenter.default.publisher(for: .driveMateDidControlMusic)) { _ in
             revealMusicBar(holdSeconds: 5.5)
         }
+        .onChange(of: mapState.isNavigating) { _, nav in
+            if nav {
+                requestWeatherAdvisoryIfNeeded()
+                if isBikeMode {
+                    BikeRideStatsService.shared.startTrackingRide()
+                }
+            } else {
+                isCompassMode = false
+                BikeRideStatsService.shared.stopTrackingRide()
+            }
+        }
+        .onChange(of: settings.travelMode) { _, mode in
+            if mode == .bike {
+                exitARMode(stopCameraIfIdle: true)
+            } else {
+                isCompassMode = false
+            }
+        }
     }
 
     @ViewBuilder
@@ -721,15 +852,16 @@ struct DriveView: View {
         VStack {
             HStack(alignment: .top) {
                 HStack(spacing: 10) {
-                    if chromeVisibility.isVisible(.speedometer) {
+                    if !isCompassMode, chromeVisibility.isVisible(.speedometer) {
                         SpeedBadge(
                             speedKmh: location.speedKmh,
                             isSpeeding: isSpeeding,
-                            pulseScale: speedPulseScale
+                            pulseScale: speedPulseScale,
+                            enlarged: isBikeMode
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.92)))
                     }
-                    if chromeVisibility.isVisible(.clock) {
+                    if !isCompassMode, chromeVisibility.isVisible(.clock) {
                         ClockBadge()
                             .transition(.opacity.combined(with: .scale(scale: 0.92)))
                     }
@@ -740,27 +872,33 @@ struct DriveView: View {
                     }
                 }
                 .padding(.leading, leadingChrome)
-                .padding(.top, 20)
+                .padding(.top, 20 + topChrome)
                 .onTapGesture { revealMusicBar() }
                 .animation(.easeInOut(duration: 0.25), value: camera.showsRecordingIndicator)
                 .animation(.spring(response: 0.38, dampingFraction: 0.84), value: chromeVisibility.hidden)
+                .animation(.spring(response: 0.42, dampingFraction: 0.84), value: isCompassMode)
 
                 Spacer(minLength: 0)
-                DriveMatePanel(
-                    assistant: assistant,
-                    guidance: mapState.nextTurnGuidance
-                )
-                .padding(.trailing, 36)
-                .padding(.top, 14)
-                .animation(
-                    .spring(response: 0.38, dampingFraction: 0.84),
-                    value: mapState.nextTurnGuidance?.maneuverID
-                )
-                .animation(
-                    .spring(response: 0.38, dampingFraction: 0.84),
-                    value: mapState.nextTurnGuidance == nil
-                )
+                if !isCompassMode {
+                    DriveMatePanel(
+                        assistant: assistant,
+                        guidance: mapState.nextTurnGuidance,
+                        enlargedTurnTile: isBikeMode
+                    )
+                    .padding(.trailing, 36)
+                    .padding(.top, 14 + topChrome)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                    .animation(
+                        .spring(response: 0.38, dampingFraction: 0.84),
+                        value: mapState.nextTurnGuidance?.maneuverID
+                    )
+                    .animation(
+                        .spring(response: 0.38, dampingFraction: 0.84),
+                        value: mapState.nextTurnGuidance == nil
+                    )
+                }
             }
+            .animation(.spring(response: 0.42, dampingFraction: 0.84), value: isCompassMode)
 
             Spacer()
         }
@@ -773,26 +911,40 @@ struct DriveView: View {
                 Spacer()
                     .allowsHitTesting(false)
                 VStack(alignment: .trailing, spacing: 12) {
-                    ARNavButton(isActive: isARMode) {
-                        revealMusicBar()
-                        toggleARMode()
+                    if isBikeMode {
+                        CompassNavButton(isActive: isCompassMode) {
+                            revealMusicBar()
+                            withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                                isCompassMode.toggle()
+                            }
+                        }
+                    } else {
+                        ARNavButton(isActive: isARMode) {
+                            revealMusicBar()
+                            toggleARMode()
+                        }
                     }
-                    if !isARMode, chromeVisibility.isVisible(.recenter), mapState.showRecenterButton {
+                    if !isARMode, !isCompassMode, chromeVisibility.isVisible(.recenter), mapState.showRecenterButton {
                         RecenterNavButton {
                             revealMusicBar()
                             mapState.recenterOnUser()
                         }
                     }
-                    EndRouteButton {
-                        endRoute()
+                    // Ukryj „Zakończ trasę”, gdy widać panel odtwarzania (pion i poziom).
+                    if !isMusicBarVisible {
+                        EndRouteButton {
+                            endRoute()
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
                     }
                 }
                 .padding(.trailing, 28)
-                .padding(.bottom, isMusicBarVisible ? 118 : 22)
+                .padding(.bottom, navBottomPad)
             }
         }
         .zIndex(15)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: isMusicBarVisible)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: bottomChrome)
 
         if isMusicBarVisible {
             VStack {
@@ -801,7 +953,7 @@ struct DriveView: View {
                 MusicControlsBar(player: player)
                     .padding(.leading, leadingChrome + 8)
                     .padding(.trailing, 36)
-                    .padding(.bottom, 14)
+                    .padding(.bottom, musicBottomPad)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 0)
@@ -817,6 +969,7 @@ struct DriveView: View {
     private func handleNavigationLocationTick() {
         mapState.updateGuidance(userCoordinate: location.coordinate)
         mapState.trackTripProgress(userCoordinate: location.coordinate)
+        mapState.considerManeuverBiasContinue(userCoordinate: location.coordinate)
         mapState.considerAutoReroute(userCoordinate: location.coordinate)
         arrivalConfirm.update(
             userCoordinate: location.coordinate,
@@ -838,7 +991,9 @@ struct DriveView: View {
         musicHideTask?.cancel()
         isMusicBarVisible = false
         exitARMode(stopCameraIfIdle: true)
+        isCompassMode = false
         arrivalConfirm.resetForNewTrip()
+        WeatherRouteAdvisoryService.shared.reset()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         DriveMateMemoryStore.shared.notifyTripEnded(
             destinationTitle: mapState.destinationTitle,
@@ -848,6 +1003,57 @@ struct DriveView: View {
         let summary = mapState.endTripAndSummarize()
         withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
             tripSummary = summary
+        }
+    }
+
+    private func requestWeatherAdvisoryIfNeeded() {
+        guard let route = mapState.route else { return }
+        let key = "\(mapState.destinationTitle ?? "cel")-\(Int(route.distance))"
+        WeatherRouteAdvisoryService.shared.adviseIfNeeded(
+            start: location.coordinate,
+            destination: mapState.destinationCoordinate,
+            travelSeconds: route.expectedTravelTime,
+            tripKey: key,
+            speak: { text in
+                assistant.announceNavigation(text)
+            }
+        )
+    }
+
+    private func handleVoiceUICommand(_ command: DriveVoiceUIBridge.UICommand) {
+        switch command {
+        case .recenter:
+            if isARMode { exitARMode(stopCameraIfIdle: true) }
+            if isCompassMode {
+                withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                    isCompassMode = false
+                }
+            }
+            revealMusicBar()
+            // Po zejściu z AR/kompasu mapa musi zdążyć się zamontować.
+            Task { @MainActor in
+                mapState.recenterOnUser()
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                mapState.recenterOnUser()
+                try? await Task.sleep(nanoseconds: 320_000_000)
+                mapState.recenterOnUser()
+            }
+        case .setAR(let on):
+            guard !isBikeMode else { return }
+            if on {
+                Task { await enterARMode() }
+            } else if isARMode {
+                exitARMode(stopCameraIfIdle: true)
+            }
+        case .setCompass(let on):
+            guard isBikeMode else { return }
+            if isARMode { exitARMode(stopCameraIfIdle: true) }
+            withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+                isCompassMode = on
+            }
+            if !on {
+                mapState.recenterOnUser()
+            }
         }
     }
 

@@ -9,6 +9,8 @@ struct DriveIdleSetupView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var interruptedRoutes = InterruptedRouteStore.shared
     var leadingChrome: CGFloat
+    var bottomChrome: CGFloat = 0
+    var topChrome: CGFloat = 0
     var onNavigationStarted: () -> Void
     var onVoiceModeChanged: ((Bool) -> Void)? = nil
 
@@ -65,6 +67,19 @@ struct DriveIdleSetupView: View {
             }
         }
         .padding(.leading, leadingChrome)
+        .padding(.bottom, bottomChrome)
+        .overlay(alignment: .topTrailing) {
+            TravelModeCornerBadge(
+                mode: settings.travelMode,
+                compact: isPortraitChrome
+            ) {
+                let next: TravelMode = settings.travelMode == .car ? .bike : .car
+                settings.travelMode = next
+            }
+            .padding(.top, (isPortraitChrome ? topChrome : 14) + 4)
+            .padding(.trailing, isPortraitChrome ? 16 : 20)
+            .animation(.spring(response: 0.42, dampingFraction: 0.84), value: settings.travelMode)
+        }
         .onAppear {
             autocomplete.setUserRegion(coordinate: location.coordinate)
             location.requestAccessAndStart()
@@ -97,85 +112,115 @@ struct DriveIdleSetupView: View {
 
     // MARK: - Destination
 
+    private var isPortraitChrome: Bool { bottomChrome > 0 }
+
     private var destinationPhase: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: isPortraitChrome ? 16 : 22) {
             Spacer(minLength: 0)
 
-            if isEditingDestination {
-                destinationSearchBlock
-                    .frame(maxWidth: 600)
-            } else {
-                HStack(spacing: 14) {
-                    Button {
-                        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
-                            isEditingDestination = true
-                            focusedField = .destination
+            // Pion: pastylka + Recently jako jedna wyśrodkowana grupa (ta sama szerokość).
+            // Poziom: Recently lekko w lewo względem dyktafonu (jak na koncepcie).
+            Group {
+                if isEditingDestination {
+                    destinationSearchBlock
+                } else {
+                    VStack(alignment: .leading, spacing: isPortraitChrome ? 16 : 22) {
+                        HStack(spacing: 14) {
+                            Button {
+                                withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+                                    isEditingDestination = true
+                                    focusedField = .destination
+                                }
+                            } label: {
+                                Text("Where you wanna go")
+                                    .font(.system(
+                                        size: isPortraitChrome ? 17 : 22,
+                                        weight: .semibold,
+                                        design: .rounded
+                                    ))
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: isPortraitChrome ? 64 : nil)
+                                    .padding(.vertical, isPortraitChrome ? 0 : 22)
+                                    .padding(.horizontal, isPortraitChrome ? 22 : 28)
+                                    .background { AnimatedDestinationPillBackground() }
+                            }
+                            .buttonStyle(.plain)
+
+                            DictaphoneCircleButton(isActive: false) {
+                                enterVoiceMode()
+                            }
                         }
+
+                        recentOrInterruptedBlock
+                            .padding(.trailing, isPortraitChrome ? 0 : 72)
+                    }
+                }
+            }
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity, alignment: isPortraitChrome ? .center : .leading)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, isPortraitChrome ? 24 : 36)
+    }
+
+    @ViewBuilder
+    private var recentOrInterruptedBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let interrupted = interruptedRoutes.route {
+                Text("Przerwana trasa:")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+
+                HStack(spacing: 10) {
+                    Button {
+                        selectInterrupted(interrupted)
                     } label: {
-                        Text("Where you wanna go")
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
+                        Text(interrupted.shortLabel)
+                            .font(.system(size: isPortraitChrome ? 14 : 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .lineLimit(1)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 22)
-                            .padding(.horizontal, 28)
-                            .background { AnimatedDestinationPillBackground() }
+                            .frame(height: recentPillHeight)
+                            .padding(.horizontal, 16)
+                            .background {
+                                Capsule(style: .continuous)
+                                    .fill(DriveMatePalette.limeRoute)
+                            }
                     }
                     .buttonStyle(.plain)
 
-                    DictaphoneCircleButton(isActive: false) {
-                        enterVoiceMode()
-                    }
-                }
-                .frame(maxWidth: 600)
-            }
-
-            // Recently / przerwana trasa — wyrównane do lewej jak na koncepcie
-            VStack(alignment: .leading, spacing: 12) {
-                if let interrupted = interruptedRoutes.route {
-                    Text("Przerwana trasa:")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.85))
-
-                    HStack(spacing: 10) {
-                        Button {
-                            selectInterrupted(interrupted)
-                        } label: {
-                            Text(interrupted.shortLabel)
-                                .font(.system(size: 16, weight: .bold, design: .rounded))
-                                .foregroundStyle(Color.black.opacity(0.85))
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .padding(.horizontal, 16)
-                                .background {
-                                    Capsule(style: .continuous)
-                                        .fill(DriveMatePalette.limeRoute)
-                                }
+                    Button {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.84)) {
+                            interruptedRoutes.clear()
                         }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.84)) {
-                                interruptedRoutes.clear()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: recentPillHeight, height: recentPillHeight)
+                            .liquidGlassCircle(.clear, interactive: true)
+                            .overlay {
+                                Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.8)
                             }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.9))
-                                .frame(width: 44, height: 44)
-                                .liquidGlassCircle(.clear.interactive())
-                                .overlay {
-                                    Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.8)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Anuluj przerwaną trasę")
                     }
-                } else if !recent.topFour.isEmpty {
-                    Text("Recently:")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.85))
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Anuluj przerwaną trasę")
+                }
+            } else if !recent.topFour.isEmpty {
+                Text("Recently:")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
 
+                if isPortraitChrome {
+                    VStack(spacing: 10) {
+                        ForEach(recent.topFour) { place in
+                            recentPillButton(place)
+                        }
+                    }
+                } else {
                     LazyVGrid(
                         columns: [
                             GridItem(.flexible(), spacing: 14),
@@ -185,34 +230,37 @@ struct DriveIdleSetupView: View {
                         spacing: 12
                     ) {
                         ForEach(recent.topFour) { place in
-                            Button {
-                                Task { await selectRecent(place) }
-                            } label: {
-                                Text(place.shortLabel)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.92))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 14)
-                                    .padding(.horizontal, 10)
-                                    .liquidGlassCapsule(.clear.interactive())
-                                    .overlay {
-                                        Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8)
-                                    }
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(isResolving)
+                            recentPillButton(place)
                         }
                     }
                 }
             }
-            .frame(maxWidth: 600, alignment: .leading)
-            .padding(.trailing, 72) // lekko w lewo względem dyktafonu / centrum pastylki
-            .padding(.top, 8)
-
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 36)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, isPortraitChrome ? 0 : 8)
+    }
+
+    private var recentPillHeight: CGFloat { isPortraitChrome ? 44 : 48 }
+
+    private func recentPillButton(_ place: RecentPlace) -> some View {
+        Button {
+            Task { await selectRecent(place) }
+        } label: {
+            Text(place.shortLabel)
+                .font(.system(size: isPortraitChrome ? 14 : 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+                .frame(height: recentPillHeight)
+                .padding(.horizontal, 16)
+                .liquidGlassCapsule(.clear, interactive: true)
+                .overlay {
+                    Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(isResolving)
     }
 
     // MARK: - Voice
@@ -432,7 +480,7 @@ struct DriveIdleSetupView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .liquidGlassCapsule(.clear.interactive())
+            .liquidGlassCapsule(.clear, interactive: true)
             .overlay { Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1) }
 
             if !autocomplete.suggestions.isEmpty {
@@ -676,5 +724,45 @@ struct AnimatedDestinationPillBackground: View {
                     phase = 360
                 }
             }
+    }
+}
+
+/// Prawy górny róg ekranu startowego — ikona + nazwa aktywnego trybu (tap = przełącz).
+private struct TravelModeCornerBadge: View {
+    let mode: TravelMode
+    var compact: Bool = false
+    var onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: compact ? 7 : 9) {
+                Image(systemName: mode.systemImage)
+                    .font(.system(size: compact ? 14 : 16, weight: .bold))
+                    .foregroundStyle(DriveMatePalette.limeRoute)
+                    .symbolRenderingMode(.hierarchical)
+                    .contentTransition(.symbolEffect(.replace))
+
+                Text(mode.title)
+                    .font(.system(size: compact ? 12 : 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .contentTransition(.opacity)
+            }
+            .padding(.horizontal, compact ? 12 : 14)
+            .padding(.vertical, compact ? 8 : 10)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.35))
+                    .liquidGlassCapsule(.clear)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(mode.title)
+        .accessibilityHint("Przełącza na \(mode == .car ? TravelMode.bike.title : TravelMode.car.title)")
     }
 }

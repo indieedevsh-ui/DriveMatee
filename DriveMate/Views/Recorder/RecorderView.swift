@@ -37,6 +37,8 @@ struct RecorderView: View {
     @ObservedObject var clips: ClipStorageService
     @ObservedObject var settings: AppSettings
     var isDark: Bool
+    /// Portrait: odsunięcie od Dynamic Island / notch.
+    var topChrome: CGFloat = 0
 
     @State private var showLibrary = false
     @State private var previewClip: RecordedClip?
@@ -57,6 +59,7 @@ struct RecorderView: View {
                 ClipsLibraryOverlay(
                     clips: clips,
                     isDark: isDark,
+                    topChrome: topChrome,
                     onSelect: { clip in
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
                             showLibrary = false
@@ -110,7 +113,7 @@ struct RecorderView: View {
                         .padding(.vertical, 6)
                         .background(Color.red, in: Capsule())
                         .padding(.trailing, 20)
-                        .padding(.top, 16)
+                        .padding(.top, 16 + topChrome)
                 }
             }
 
@@ -154,7 +157,7 @@ struct RecorderView: View {
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 54, height: 54)
-                        .liquidGlassCircle(.clear.interactive())
+                        .liquidGlassCircle(.clear, interactive: true)
                         .overlay { Circle().stroke(Color.white.opacity(0.3), lineWidth: 1) }
                         .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
                 }
@@ -210,6 +213,7 @@ struct RecorderView: View {
 struct ClipsLibraryOverlay: View {
     @ObservedObject var clips: ClipStorageService
     var isDark: Bool
+    var topChrome: CGFloat = 0
     var onSelect: (RecordedClip) -> Void
     var onClose: () -> Void
 
@@ -240,7 +244,7 @@ struct ClipsLibraryOverlay: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 32, height: 32)
-                            .liquidGlassCircle(.clear.interactive())
+                            .liquidGlassCircle(.clear, interactive: true)
                     }
                     .buttonStyle(.plain)
                 }
@@ -285,9 +289,9 @@ struct ClipsLibraryOverlay: View {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .fill(Color.clear)
                     .liquidGlassRect(cornerRadius: 28, .regular)
-                    .ignoresSafeArea()
             }
-            .padding(.vertical, 10)
+            .padding(.top, 10 + topChrome)
+            .padding(.bottom, 10)
             .padding(.trailing, 10)
             .shadow(color: .black.opacity(0.4), radius: 24, x: -6)
         }

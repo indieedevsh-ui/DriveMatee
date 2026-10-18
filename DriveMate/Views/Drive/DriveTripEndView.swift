@@ -7,6 +7,7 @@ import UIKit
 struct DriveTripEndView: View {
     let summary: TripSummary
     var leadingChrome: CGFloat
+    var bottomChrome: CGFloat = 0
     var userCoordinate: CLLocationCoordinate2D?
     var onBackToMenu: () -> Void
     var onNavigateToParking: (ParkingOption) -> Void
@@ -68,6 +69,7 @@ struct DriveTripEndView: View {
             }
         }
         .padding(.leading, leadingChrome)
+        .padding(.bottom, bottomChrome)
         .task { await runSummarySequence() }
     }
 
@@ -201,7 +203,7 @@ struct DriveTripEndView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
             .padding(.horizontal, 22)
-            .liquidGlassCapsule(.clear.interactive())
+            .liquidGlassCapsule(.clear, interactive: true)
             .overlay {
                 Capsule().stroke(Color.white.opacity(0.22), lineWidth: 0.9)
             }
@@ -311,7 +313,7 @@ struct DriveTripEndView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .liquidGlassRect(cornerRadius: 18, .clear.interactive())
+        .liquidGlassRect(cornerRadius: 18, .clear, interactive: true)
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
@@ -606,7 +608,7 @@ struct EndRouteButton: View {
                 .background {
                     Capsule()
                         .fill(Color.black.opacity(isLight ? 0.14 : 0))
-                        .liquidGlassCapsule(.clear.interactive())
+                        .driveTileGlassCapsule(interactive: true)
                 }
                 .overlay {
                     Capsule()

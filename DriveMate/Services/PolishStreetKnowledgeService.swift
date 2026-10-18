@@ -30,7 +30,10 @@ enum PolishStreetKnowledgeService {
                 let shortName = streetName
                     .replacingOccurrences(of: "ulica ", with: "", options: .caseInsensitive)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                if lowerWiki.contains(shortName.lowercased()) || lowerWiki.hasPrefix("ulic") {
+                if lowerWiki.contains(shortName.lowercased()) || lowerWiki.hasPrefix("ulic")
+                    || lowerWiki.contains("nazwan") || lowerWiki.contains("patron")
+                    || lowerWiki.contains("urodzi") || lowerWiki.contains("żył")
+                    || lowerWiki.contains("zyl") || lowerWiki.contains("histori") {
                     return wiki
                 }
                 return "\(place). \(wiki)"
@@ -47,6 +50,18 @@ enum PolishStreetKnowledgeService {
                 parts.append("Nie mam teraz pewnej ciekawostki historycznej o tym miejscu.")
             }
             return parts.joined(separator: " ")
+        }
+
+        /// Skrót nazwy bez „ulica/aleja” — do wyszukiwania patrona.
+        var patronymicHint: String {
+            streetName
+                .replacingOccurrences(of: "ulica ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "ul. ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "aleja ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "al. ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "plac ", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "pl. ", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         var cardBody: String { spokenSummary }
@@ -266,21 +281,89 @@ enum PolishStreetKnowledgeService {
     private static func fetchWikipediaCuriosity(street: String, city: String?) async -> String? {
         let cleanStreet = street
             .replacingOccurrences(of: "ulica ", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "ul. ", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "aleja ", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "al. ", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "plac ", with: "", options: .caseInsensitive)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
         var queries: [String] = []
         if let city, !city.isEmpty {
             queries.append("Ulica \(cleanStreet) (\(city))")
             queries.append("\(cleanStreet) (\(city))")
+            queries.append("Ulica \(cleanStreet) w \(city)")
         }
         queries.append("Ulica \(cleanStreet)")
         queries.append(cleanStreet)
+        // Patron / postać — wiele ulic nosi imię osoby (np. Kościuszki, Piłsudskiego).
+        if looksLikePersonName(cleanStreet) {
+            queries.append(cleanStreet)
+            queries.append("\(cleanStreet) (postać)")
+            if let city, !city.isEmpty {
+                queries.append("\(cleanStreet) (\(city))")
+            }
+        }
 
         for q in queries {
             if let extract = await wikipediaSummary(titleHint: q) {
+                let short = shortenCuriosity(extract)
+                // Preferuj treść historyczną / o patronie.
+                if isHistoricalExtract(short) || q.lowercased().hasPrefix("ulica") {
+                    return short
+                }
+                // Zachowaj jako fallback, ale szukaj dalej czegoś bardziej historycznego.
+                if let better = await searchHistoricalFallback(street: cleanStreet, city: city) {
+                    return better
+                }
+                return short
+            }
+        }
+        return await searchHistoricalFallback(street: cleanStreet, city: city)
+    }
+
+    private static func searchHistoricalFallback(street: String, city: String?) async -> String? {
+        var queries: [String] = ["historia ulicy \(street)"]
+        if let city, !city.isEmpty {
+            queries.insert("historia ulicy \(street) \(city)", at: 0)
+        }
+        if looksLikePersonName(street) {
+            queries.append(street)
+        }
+        for q in queries {
+            if let extract = await wikipediaSummary(titleHint: q), isHistoricalExtract(extract) {
                 return shortenCuriosity(extract)
             }
         }
+        // Ostatnia szansa: sama postać patrona.
+        if looksLikePersonName(street), let extract = await wikipediaSummary(titleHint: street) {
+            let short = shortenCuriosity(extract)
+            return "Nazwa ulicy nawiązuje do postaci: \(short)"
+        }
         return nil
+    }
+
+    private static func looksLikePersonName(_ name: String) -> Bool {
+        let parts = name.split(separator: " ").map(String.init)
+        guard !parts.isEmpty, parts.count <= 4 else { return false }
+        // Unikaj czysto topograficznych („Nowa”, „Główna”, „Polna”).
+        let topo = ["nowa", "stara", "glowna", "główna", "polna", "lesna", "leśna",
+                    "sloneczna", "słoneczna", "kwiatowa", "parkowa", "szkolna", "kościelna",
+                    "koscielna", "ogrodowa", "spacerowa", "dworcowa", "rynek"]
+        let fold = DriveIntentQueryHelpers.foldForMatching(name)
+        if topo.contains(where: { fold == $0 || fold.hasPrefix($0 + " ") }) { return false }
+        // Genetywy typu „Kościuszki”, „Piłsudskiego”, „Mickiewicza” albo imię+nazwisko.
+        return parts.contains { $0.count >= 4 }
+    }
+
+    private static func isHistoricalExtract(_ text: String) -> Bool {
+        let fold = DriveIntentQueryHelpers.foldForMatching(text)
+        let keys = [
+            "histori", "nazwan", "patron", "urodzi", "zmarl", "zmarł", "wiek", "powstal",
+            "powstał", "zbudowan", "otwart", "przemianowan", "poświęc", "poswiec",
+            "bohater", "pisarz", "poeta", "krol", "król", "generał", "general", "bitw",
+            "powstan", "wojn", "xix", "xx", "xviii", "lat "
+        ]
+        return keys.contains(where: { fold.contains($0) })
     }
 
     private static func wikipediaSummary(titleHint: String) async -> String? {

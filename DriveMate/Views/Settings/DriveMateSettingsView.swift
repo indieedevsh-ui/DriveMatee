@@ -4,6 +4,9 @@ import SwiftUI
 struct DriveMateSettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject private var memory = DriveMateMemoryStore.shared
+    @ObservedObject private var savedPlaces = SavedPlacesStore.shared
+    @ObservedObject private var offlineMaps = OfflineMapDownloadService.shared
+    @ObservedObject private var brainPack = DeterministicBrainPackService.shared
     @StateObject private var wakeTrainer = WakeWordTrainer()
 
     @State private var confirmClearAll = false
@@ -12,6 +15,9 @@ struct DriveMateSettingsView: View {
         ScrollView {
             VStack(spacing: 18) {
                 introCard
+                assistantModelCard
+                offlineMapsCard
+                savedPlacesCard
                 visitsCard
                 routePrefsCard
                 wakeTrainCard
@@ -34,7 +40,7 @@ struct DriveMateSettingsView: View {
                 wakeTrainer.cancel()
             }
         } message: {
-            Text("Usunie historię wizyt (3 dni), wyuczone unikania ulic oraz profil wymowy Hey Drive.")
+            Text("Usunie dom/pracę, historię wizyt (3 dni), unikania ulic oraz profil wymowy Hey Drive.")
         }
     }
 
@@ -44,10 +50,211 @@ struct DriveMateSettingsView: View {
                 Text("PERSONALIZACJA")
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .modifier(SettingsPrimaryText())
-                Text("Drive Mate dopasowuje trasy do Twojego stylu jazdy, pamięta miejsca z ostatnich 3 dni i uczy się, jak mówisz „Hey Drive”. Tutaj możesz to przejrzeć i usunąć.")
+                Text("Drive Mate pamięta dom i pracę, dopasowuje trasy, miejsca z 3 dni i uczy się „Hey Drive”. Siri: „Navigate to Home in DriveMate”.")
                     .font(.system(size: 13, weight: .medium))
                     .modifier(SettingsSecondaryText())
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var assistantModelCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("MODEL ASYSTENTA")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .modifier(SettingsPrimaryText())
+
+                Text(DeviceCapability.hardwareSummary)
+                    .font(.system(size: 12, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if DeviceCapability.supportsFoundationModelsHardware {
+                    Picker("Tryb", selection: Binding(
+                        get: { settings.assistantInferenceMode },
+                        set: { settings.assistantInferenceMode = $0 }
+                    )) {
+                        ForEach(AssistantInferenceMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(settings.effectiveAssistantMode.subtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "cpu")
+                            .foregroundStyle(DriveMatePalette.limeRoute)
+                        Text("Aktywny: model deterministyczny (offline)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .modifier(SettingsPrimaryText())
+                    }
+                    Text("Na iPhone poniżej 15 Pro Foundation Models są niedostępne — asystent, łamigówki i ciekawostki korzystają z modelu deterministycznego z wieloma kluczami odpowiedzi.")
+                        .font(.system(size: 12, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Divider().opacity(0.35)
+
+                HStack {
+                    Text("PACZKA DETERMINISTYCZNA")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                    Spacer()
+                    if brainPack.isInstalled || brainPack.phase == .completed {
+                        Text("\(brainPack.progressPercent)%")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(DriveMatePalette.limeRoute)
+                    }
+                }
+
+                Text(brainPack.statusLine.isEmpty
+                     ? "Pobierz słowniki, szablony łamigówek i klucze odpowiedzi — działa w 100% offline."
+                     : brainPack.statusLine)
+                    .font(.system(size: 12, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let summary = brainPack.packSummary {
+                    Text(summary)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                }
+
+                if brainPack.isActive {
+                    ProgressView(value: brainPack.progress)
+                        .tint(DriveMatePalette.limeRoute)
+                }
+
+                HStack(spacing: 12) {
+                    if !brainPack.isInstalled {
+                        Button(brainPack.isActive ? "Instaluję…" : "Pobierz model") {
+                            brainPack.downloadAndInstall()
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DriveMatePalette.limeRoute)
+                        .disabled(brainPack.isActive)
+                    } else {
+                        Button("Usuń paczkę") {
+                            brainPack.deletePack()
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.red.opacity(0.85))
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var offlineMapsCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("MAPY OFFLINE")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                    Spacer()
+                    if offlineMaps.showsDriveBadge || offlineMaps.phase == .completed {
+                        Text("\(offlineMaps.progressPercent)%")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(DriveMatePalette.limeRoute)
+                    }
+                }
+                Text(offlineMaps.statusLine.isEmpty
+                     ? "Powiedz „pobierz mapy offline” — wybierzesz obszar (domyślnie 10 km). Po utracie sieci wznowi od miejsca przerwania."
+                     : offlineMaps.statusLine)
+                    .font(.system(size: 12, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let summary = offlineMaps.packSummary {
+                    Text(summary)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                }
+
+                if offlineMaps.isActive {
+                    ProgressView(value: offlineMaps.progress)
+                        .tint(DriveMatePalette.limeRoute)
+                }
+
+                HStack(spacing: 12) {
+                    if offlineMaps.phase == .pausedOffline {
+                        Button("Wznów") {
+                            offlineMaps.resumeIfNeeded()
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DriveMatePalette.limeRoute)
+                    }
+                    if offlineMaps.phase == .completed || offlineMaps.progress > 0 {
+                        Button("Usuń paczkę") {
+                            offlineMaps.deletePack()
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.red.opacity(0.85))
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var savedPlacesCard: some View {
+        SettingsCard(isDark: settings.isDark) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("DOM · PRACA · MIEJSCA")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .modifier(SettingsPrimaryText())
+                    Spacer()
+                    if !savedPlaces.places.isEmpty {
+                        Button("Wyczyść") { savedPlaces.clearAll() }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DriveMatePalette.limeRoute)
+                    }
+                }
+                Text("„Tutaj jest mój/moja Y” = zapis GPS. „Zapamiętaj mój/moja Y” = okienko z adresem. Y = dom, praca, szkoła…. Potem „jedź do Y”.")
+                    .font(.system(size: 12, weight: .medium))
+                    .modifier(SettingsSecondaryText())
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if savedPlaces.places.isEmpty {
+                    Text("Brak zapisanych miejsc.")
+                        .font(.system(size: 13, weight: .medium))
+                        .modifier(SettingsSecondaryText())
+                } else {
+                    ForEach(savedPlaces.places) { place in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(place.label)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .modifier(SettingsPrimaryText())
+                                Text(place.address.isEmpty ? "Zapisana lokalizacja GPS" : place.address)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .modifier(SettingsSecondaryText())
+                            }
+                            Spacer()
+                            Button {
+                                savedPlaces.remove(id: place.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.red.opacity(0.85))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 6)
+                        if place.id != savedPlaces.places.last?.id {
+                            Divider().opacity(0.35)
+                        }
+                    }
+                }
             }
         }
     }
@@ -242,7 +449,7 @@ struct DriveMateSettingsView: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(.horizontal, 18)
                         .padding(.vertical, 12)
-                        .liquidGlassCapsule(.clear.interactive())
+                        .liquidGlassCapsule(.clear, interactive: true)
                     }
 
                     Button {
@@ -276,7 +483,7 @@ struct DriveMateSettingsView: View {
                 Text("USUŃ DANE")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .modifier(SettingsPrimaryText())
-                Text("Kasuje historię wizyt, preferencje tras i profil Hey Drive. Model auta w ustawieniach ogólnych zostaje.")
+                Text("Kasuje dom/pracę, historię wizyt, preferencje tras i profil Hey Drive. Model auta w ustawieniach ogólnych zostaje.")
                     .font(.system(size: 12, weight: .medium))
                     .modifier(SettingsSecondaryText())
                     .fixedSize(horizontal: false, vertical: true)

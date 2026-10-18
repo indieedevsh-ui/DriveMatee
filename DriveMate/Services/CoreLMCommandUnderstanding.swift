@@ -3,6 +3,7 @@ import FoundationModels
 
 /// CoreLM — strukturalne rozumienie naturalnego języka PL (ASR / tekst).
 /// Rozróżnia akcje aplikacji, swobodną nawigację (start+cel) oraz uczciwe „nie umiem”.
+@available(iOS 26.0, *)
 enum CoreLM {
     @Generable(description: "Zrozumiana wypowiedź kierowcy Drive Mate")
     struct UnderstoodCommand {
@@ -45,6 +46,12 @@ enum CoreLM {
             case findNearestStore
             /// Losowa ciekawostka (nie o konkretnej ulicy)
             case tellTrivia
+            /// Ile czasu pozostało do końca aktywnej trasy
+            case remainingTravelTime
+            /// Zadaj łamigówkę; destinationOrQuery = math|fantasy|science|philosophy (opcjonalnie)
+            case posePuzzle
+            /// Powtórz ostatnią łamigówkę
+            case repeatPuzzle
             /// Anuluj nasłuchiwanie asystenta
             case cancelListening
             /// Anuluj / zakończ aktywną trasę
@@ -61,6 +68,14 @@ enum CoreLM {
             case musicPrevious
             /// Limit / max prędkość na odcinku
             case speedLimit
+            /// Kiedy / gdzie skręcić — następne rondo lub skrzyżowanie
+            case nextTurnInfo
+            /// Przelicz trasę: jedź prosto na następnym skrzyżowaniu
+            case preferStraight
+            /// Przelicz trasę: skręć w lewo (zamiast zaplanowanego)
+            case preferLeft
+            /// Przelicz trasę: skręć w prawo (zamiast zaplanowanego)
+            case preferRight
             /// Szacunek kosztu paliwa na trasie
             case fuelCost
             /// Stan baku: ile litrów / procent, czy wystarczy
@@ -80,10 +95,46 @@ enum CoreLM {
             /// Ukryj / pokaż kafelek UI (prędkościomierz, zegar, Drive…)
             case chromeHide
             case chromeShow
+            /// Zwiększ przezroczystość kafelków (regular liquid glass ~35%)
+            case tilesMoreTransparent
+            /// Zmniejsz przezroczystość kafelków (regular liquid glass ~90%)
+            case tilesLessTransparent
+            /// Przeczytaj na głos widoczny kafelek / kartę / ofertę
+            case readVisibleTile
             /// Wyśrodkuj mapę / widok na kierowcy (NIE nawigacja)
             case recenterMap
+            /// Włącz nagrywanie
+            case recordingOn
+            /// Wyłącz nagrywanie
+            case recordingOff
+            /// Zmiana głośności; destinationOrQuery = „+” / „-” / „50” / „50%”
+            case setVolume
+            /// Tryb samochodowy
+            case travelModeCar
+            /// Tryb rowerowy
+            case travelModeBike
+            /// Włącz tryb AR
+            case arOn
+            /// Wyłącz tryb AR
+            case arOff
+            /// Włącz kompas (rower)
+            case compassOn
+            /// Wyłącz kompas
+            case compassOff
             /// Pokaż listę umiejętności Drive Mate
             case showCapabilities
+            /// Pobierz mapy offline (okienko z obszarem)
+            case downloadOfflineMaps
+            /// Zapisz bieżącą lokalizację jako dom
+            case saveHome
+            /// Zapisz bieżącą lokalizację jako pracę
+            case saveWork
+            /// Zaktualizuj dom (bieżąca lokalizacja albo destinationOrQuery = nowy adres)
+            case updateHome
+            /// Zaktualizuj pracę
+            case updateWork
+            /// Zapisz / zmień własne miejsce; destinationOrQuery = nazwa; startPlace = opcjonalny adres
+            case saveNamedPlace
             /// Pytanie ogólne — odpowiedź tekstowa bez zgadywania mapy
             case answer
             /// Prośba o funkcję spoza możliwości aplikacji
@@ -123,6 +174,9 @@ enum CoreLM {
                 - findFood — głód, restauracja, jedzenie, knajpa, lunch, „najbliższa restauracja”, „gdzie zjeść”
                 - findNearestStore — „znajdź żabkę”, Lewiatan, Empik, Sinsay, Biedronka…; destinationOrQuery = marka
                 - tellTrivia — „powiedz ciekawostkę” / „coś ciekawego” (losowa, NIE o ulicy)
+                - remainingTravelTime — „ile jeszcze czasu”, „ile zostało do celu”, „kiedy dojadę”, ETA trasy — NIGDY unsupported
+                - posePuzzle — „daj zagadkę”, „łamigówka”, „łamigłówka”, „zagadka”, „puzzle”, „quiz”, „coś do myślenia”, „zagadka matematyczna/fantasy/naukowa/filozoficzna”; destinationOrQuery = math|fantasy|science|philosophy albo puste — NIGDY unsupported
+                - repeatPuzzle — „powtórz zagadkę”, „powtórz łamigówkę”, „jeszcze raz zagadkę” — NIGDY unsupported
                 - cancelListening — „anuluj nasłuchiwanie”, „przestań słuchać”, wyłącz asystenta
                 - cancelRoute — anuluj / zakończ aktywną trasę nawigacji
                 - restoreInterruptedRoute — „przywróć wcześniejszą trasę” / przerwaną nawigację (NIE podsumowanie — tylko zmiana celu)
@@ -131,6 +185,17 @@ enum CoreLM {
                 - musicNext — następny / kolejny utwór / skip — NIGDY unsupported
                 - musicPrevious — poprzedni utwór / cofnij utwór — NIGDY unsupported (to NIE jest restoreInterruptedRoute)
                 - speedLimit — jaka max prędkość / limit na odcinku
+                - nextTurnInfo — „kiedy mam skręcić”, „na jakim rondzie”, „gdzie skrecam”, „następny skręt” (pytanie, NIE zmiana trasy)
+                - preferStraight — „chcę jechać prosto na następnym skrzyżowaniu”, „nie skręcaj, jedź prosto”
+                - preferLeft — „chcę skręcić w lewo na następnym”, „zamiast w prawo jedź w lewo”
+                - preferRight — „chcę w prawo na następnym skrzyżowaniu”
+                - saveHome — TYLKO „tutaj jest mój dom” / „tu jest dom” (bieżąca lokalizacja GPS)
+                - saveWork — TYLKO „tutaj jest moja praca” (GPS)
+                - updateHome — „zmień mój dom” / „zmień dom na …”
+                - updateWork — „zmień moją pracę”
+                - saveNamedPlace — „zapamiętaj mój/moja Y” (Y=dom/praca/szkoła/…) → okienko (startPlace puste);
+                  albo „tutaj jest moja szkoła” → GPS: destinationOrQuery=szkoła, startPlace=\"__here__\";
+                  albo „moja szkoła to UKEN”: destinationOrQuery=szkoła, startPlace=UKEN
                 - fuelCost — ile paliwa / spalanie / koszt przejazdu / „ile spalę” / „ile zapłacę za paliwo” / „koszt trasy” / „ile litrów na trasie”
                 - fuelLevel — stan baku: „ile mam paliwa”, „poziom paliwa”, „ile procent”, „czy bak pełny”, „czy wystarczy mi paliwa”, „czy muszę zatankować”
                 - fuelRange — zasięg: „na ile wystarczy”, „na ile kilometrów”, „jak daleko dojadę”, „dowieziesz mnie”, „czy dojadę na rezerwie”, „zasięg auta”
@@ -141,8 +206,17 @@ enum CoreLM {
                 - pastVisit — „tam gdzie pojechałem 2 dni temu”; destinationOrQuery = „2” lub „wczoraj”
                 - chromeHide — ukryj kafelek UI; destinationOrQuery = nazwa (prędkościomierz / zegar / Drive / wyśrodkuj / nagrywanie). NIE ukrywaj: zakończ trasę, muzyka, skręt
                 - chromeShow — pokaż / przywróć kafelek UI; destinationOrQuery = nazwa
+                - tilesMoreTransparent — „zwiększ przezroczystość kafelków” / bardziej przezroczyste kafelki (regular ~35%)
+                - tilesLessTransparent — „zmniejsz przezroczystość kafelków” / mniej przezroczyste / mocniejsze szkło (regular ~90%)
+                - readVisibleTile — „przeczytaj mi to” / „przeczytaj kafelek” / „co tu pisze” — odczyt widocznej karty/oferty/skrętu
                 - recenterMap — „wyśrodkuj widok”, „centruj mapę”, „wycentruj na mnie” — akcja mapy, NIGDY navigate
+                - recordingOn / recordingOff — włącz / wyłącz nagrywanie (NIE chromeHide)
+                - setVolume — głośność aplikacji; destinationOrQuery = „+”, „-”, „50”, „50%”, „głośniej”, „ciszej”
+                - travelModeCar / travelModeBike — przełącz tryb samochodowy / rowerowy
+                - arOn / arOff — włącz / wyłącz tryb AR (samochód, podczas nawigacji)
+                - compassOn / compassOff — włącz / wyłącz kompas (rower, podczas nawigacji)
                 - showCapabilities — „co potrafisz”, „co umiesz”, „jakie masz umiejętności”, „help”
+                - downloadOfflineMaps — „pobierz mapy offline”, „ściągnij mapę offline”
                 - answer — pytanie ogólne / rozmowa; NIE wymyślaj mapy; wypełnij spokenReply
                 - unsupported — prośba o coś, czego Drive Mate nie robi; spokenReply = krótka odmowa BEZ listy umiejętności
                 - none — pustka / szum
@@ -168,8 +242,23 @@ enum CoreLM {
                 - „następny utwór” / „kolejna piosenka” → musicNext
                 - „poprzedni utwór” / „cofnij utwór” → musicPrevious
                 - „jaka jest maksymalna prędkość” → speedLimit
-                - „opowiedz historię tej ulicy” → streetHistory
-                - „co to za ulica” / „informacje o ulicy” / „ciekawostki o ulicy” → streetInfo lub streetHistory
+                - „kiedy mam skręcić” / „na jakim rondzie skręcam” / „gdzie mam skręcić” → nextTurnInfo
+                - „chciałbym pojechać prosto na następnym skrzyżowaniu” → preferStraight
+                - „jedź prosto zamiast skręcać” / „nie skręcaj” → preferStraight
+                - „chcę skręcić w lewo na następnym” → preferLeft
+                - „na następnym skrzyżowaniu w prawo” → preferRight
+                - „tutaj jest mój dom” → saveHome
+                - „tutaj jest moja praca” → saveWork
+                - „tutaj jest moja szkoła” → saveNamedPlace, destinationOrQuery=szkoła, startPlace=__here__
+                - „zapamiętaj mój dom” / „zapamiętaj moją pracę” / „zapamiętaj moją szkołę”
+                  → saveNamedPlace, destinationOrQuery=dom|praca|szkoła, startPlace puste (okienko)
+                - „zmień mój dom” / „zmień dom na Wawel” → updateHome (adres w destinationOrQuery)
+                - „zapamiętaj moja szkoła to UKEN” → saveNamedPlace, destinationOrQuery=szkoła, startPlace=UKEN
+                - „opowiedz historię tej ulicy” / „opowiedz coś o tej ulicy” / „powiedz coś o ulicy” → streetHistory
+                - „co to za ulica” / „informacje o ulicy” → streetInfo (też z nutą historyczną)
+                - „ile jeszcze czasu” / „ile zostało do celu” / „kiedy dojadę” → remainingTravelTime
+                - „daj zagadkę” / „daj łamigówkę” / „łamigówka” / „łamigłówka” / „puzzle” → posePuzzle — NIGDY unsupported
+                - „powtórz zagadkę” / „powtórz łamigówkę” → repeatPuzzle
                 - „ile będzie kosztować paliwo” / „ile spalę” / „zużycie paliwa” / „koszt trasy” → fuelCost
                 - „ile mam paliwa” / „poziom paliwa” / „czy wystarczy mi paliwa” / „czy muszę zatankować” → fuelLevel
                 - „na ile wystarczy” / „jak daleko dojadę” / „dowieziesz mnie” / „zasięg auta” → fuelRange
@@ -180,9 +269,18 @@ enum CoreLM {
                 - „weź mnie tam gdzie pojechałem 2 dni temu” → pastVisit, destinationOrQuery=\"2\"
                 - „ukryj prędkościomierz” → chromeHide, destinationOrQuery=\"prędkościomierz\"
                 - „pokaż zegar” → chromeShow, destinationOrQuery=\"zegar\"
+                - „zwiększ przezroczystość kafelków” / „bardziej przezroczyste kafelki” → tilesMoreTransparent
+                - „zmniejsz przezroczystość kafelków” / „mniej przezroczyste kafelki” → tilesLessTransparent
+                - „przeczytaj mi to” / „przeczytaj kafelek” / „co tu pisze” → readVisibleTile
                 - „wyśrodkuj mi widok” / „centruj mapę” / „wycentruj na mnie” → recenterMap (NIGDY navigate do „widok”/„mapa”)
+                - „włącz nagrywanie” → recordingOn; „wyłącz nagrywanie” → recordingOff
+                - „zwiększ głośność” → setVolume, destinationOrQuery=\"+\"; „głośność na 50%” → setVolume, \"50%\"
+                - „tryb rowerowy” → travelModeBike; „tryb samochodowy” → travelModeCar
+                - „włącz AR” → arOn; „wyłącz kompas” → compassOff
                 - „co potrafisz?” / „co umiesz?” / „jakie masz umiejętności?” → showCapabilities
+                - „pobierz mapy offline” / „ściągnij mapę offline” → downloadOfflineMaps
                 - „korki na Długiej” → traffic, destinationOrQuery=\"ulica Długa\"
+                - „czy gdzieś mogę się spodziewać korków” / „szansa na korki na trasie” → traffic, destinationOrQuery puste
                 - „zadzwoń do mamy” → unsupported, spokenReply=\"Nie mogę tego zrealizować.”
                 - „wylosuj trasę gdziekolwiek” → unsupported — NIE losuj miejsca
 
@@ -336,6 +434,19 @@ enum CoreLM {
         case .tellTrivia:
             return .tellTrivia
 
+        case .remainingTravelTime:
+            return .remainingTravelTime
+
+        case .posePuzzle:
+            let fold = DriveIntentQueryHelpers.foldForMatching(dest)
+            let spokenFold = DriveIntentQueryHelpers.foldForMatching(command.spokenReply)
+            let cat = DrivePuzzleService.category(fromFolded: fold)
+                ?? DrivePuzzleService.category(fromFolded: spokenFold)
+            return .posePuzzle(categoryRaw: cat?.rawValue)
+
+        case .repeatPuzzle:
+            return .repeatPuzzle
+
         case .cancelListening:
             return .cancelListening
 
@@ -359,6 +470,18 @@ enum CoreLM {
 
         case .speedLimit:
             return .speedLimit
+
+        case .nextTurnInfo:
+            return .nextTurnInfo
+
+        case .preferStraight:
+            return .preferManeuver(direction: .straight)
+
+        case .preferLeft:
+            return .preferManeuver(direction: .left)
+
+        case .preferRight:
+            return .preferManeuver(direction: .right)
 
         case .fuelCost:
             return .fuelCost
@@ -411,11 +534,110 @@ enum CoreLM {
             guard !q.isEmpty else { return nil }
             return .setChromeTile(tileQuery: q, visible: true)
 
+        case .tilesMoreTransparent:
+            return .setTilesTransparency(moreTransparent: true)
+
+        case .tilesLessTransparent:
+            return .setTilesTransparency(moreTransparent: false)
+
+        case .readVisibleTile:
+            return .readVisibleTile
+
         case .recenterMap:
             return .recenterMap
 
+        case .recordingOn:
+            return .setRecording(enabled: true)
+
+        case .recordingOff:
+            return .setRecording(enabled: false)
+
+        case .setVolume:
+            let q = DriveIntentQueryHelpers.foldForMatching(dest.isEmpty ? command.spokenReply : dest)
+            if q.contains("+") || q.contains("glosniej") || q.contains("zwieksz") || q.contains("up") {
+                return .setVolume(level: nil, delta: 0.12)
+            }
+            if q.contains("-") || q.contains("ciszej") || q.contains("zmniejsz") || q.contains("scisz") || q.contains("down") {
+                return .setVolume(level: nil, delta: -0.12)
+            }
+            if let pctRange = q.range(of: #"\d{1,3}"#, options: .regularExpression),
+               let n = Double(q[pctRange]) {
+                let level = n > 1 ? min(1, n / 100) : min(1, max(0, n))
+                return .setVolume(level: level, delta: nil)
+            }
+            return .setVolume(level: nil, delta: 0.12)
+
+        case .travelModeCar:
+            return .setTravelMode(.car)
+
+        case .travelModeBike:
+            return .setTravelMode(.bike)
+
+        case .arOn:
+            return .setOverlayMode(ar: true, compass: nil)
+
+        case .arOff:
+            return .setOverlayMode(ar: false, compass: nil)
+
+        case .compassOn:
+            return .setOverlayMode(ar: nil, compass: true)
+
+        case .compassOff:
+            return .setOverlayMode(ar: nil, compass: false)
+
         case .showCapabilities:
             return .showCapabilities
+
+        case .downloadOfflineMaps:
+            return .downloadOfflineMaps
+
+        case .saveHome:
+            return .savePlace(slot: .home, customLabel: nil, replaceExisting: true, query: nil)
+
+        case .saveWork:
+            return .savePlace(slot: .work, customLabel: nil, replaceExisting: true, query: nil)
+
+        case .updateHome:
+            if dest.isEmpty { return .promptSavePlaceName(label: "Dom") }
+            return .savePlace(slot: .home, customLabel: nil, replaceExisting: true, query: dest)
+
+        case .updateWork:
+            if dest.isEmpty { return .promptSavePlaceName(label: "Praca") }
+            return .savePlace(slot: .work, customLabel: nil, replaceExisting: true, query: dest)
+
+        case .saveNamedPlace:
+            let name = dest.isEmpty
+                ? command.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)
+                : dest
+            guard !name.isEmpty else { return nil }
+            let addr = command.startPlace.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = SavedPlacesStore.canonicalLabel(for: name)
+            let foldAddr = DriveIntentQueryHelpers.foldForMatching(addr)
+            // GPS „tutaj jest …”
+            if foldAddr == "__here__" || foldAddr == "here" || foldAddr == "gps" {
+                let key = SavedPlacesStore.normalizeAliasKey(DriveIntentQueryHelpers.foldForMatching(label))
+                switch key {
+                case "dom", "home":
+                    return .savePlace(slot: .home, customLabel: nil, replaceExisting: true, query: nil)
+                case "praca", "work":
+                    return .savePlace(slot: .work, customLabel: nil, replaceExisting: true, query: nil)
+                default:
+                    return .savePlace(slot: .custom, customLabel: label, replaceExisting: true, query: nil)
+                }
+            }
+            // Bez nazwy → okienko („zapamiętaj mój dom / szkołę”)
+            if addr.isEmpty {
+                return .promptSavePlaceName(label: label)
+            }
+            let key = SavedPlacesStore.normalizeAliasKey(DriveIntentQueryHelpers.foldForMatching(label))
+            switch key {
+            case "dom", "home":
+                return .savePlace(slot: .home, customLabel: nil, replaceExisting: true, query: addr)
+            case "praca", "work":
+                return .savePlace(slot: .work, customLabel: nil, replaceExisting: true, query: addr)
+            default:
+                return .savePlace(slot: .custom, customLabel: label, replaceExisting: true, query: addr)
+            }
 
         case .answer:
             let reply = command.spokenReply.trimmingCharacters(in: .whitespacesAndNewlines)
